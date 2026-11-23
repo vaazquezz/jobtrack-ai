@@ -54,7 +54,20 @@ function installFakeApi(initial: Application[] = [], options: { failList?: numbe
         listFailures -= 1
         return json(500, { detail: 'Internal Server Error' })
       }
-      return json(200, items)
+      // Mirror the backend: case-insensitive match on company or position, plus status.
+      const params = new URL(url, 'http://localhost').searchParams
+      const q = params.get('q')?.trim().toLocaleLowerCase() ?? ''
+      const status = params.get('status')
+      const matches = items.filter(
+        (item) =>
+          (!q ||
+            item.company.toLocaleLowerCase().includes(q) ||
+            item.position.toLocaleLowerCase().includes(q)) &&
+          (!status || item.status === status),
+      )
+      const response = json(200, matches)
+      response.headers.set('X-Total-Count', String(matches.length))
+      return response
     }
     if (method === 'POST' && url === '/api/applications') {
       const created = makeApplication({ ...body, id: nextId++ })
@@ -79,7 +92,13 @@ function installFakeApi(initial: Application[] = [], options: { failList?: numbe
   })
 
   vi.stubGlobal('fetch', fetchMock)
-  return { calls, items: () => items, fetchMock }
+  /** Query strings of every list request, e.g. ["limit=200", "q=acme&limit=200"]. */
+  const listQueries = () =>
+    calls
+      .filter((call) => call.method === 'GET' && call.url.startsWith('/api/applications?'))
+      .map((call) => call.url.split('?')[1])
+
+  return { calls, listQueries, items: () => items, fetchMock }
 }
 
 function renderPage() {
@@ -273,5 +292,138 @@ describe('ApplicationsPage', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(api.calls.some((call) => call.method === 'POST')).toBe(false)
+  })
+})
+
+// --- Search and filters ---------------------------------------------------------
+
+const SAMPLE: Application[] = [
+  makeApplication({ id: 1, company: 'Example Corp', position: 'Backend Developer', status: 'applied' }),
+  makeApplication({ id: 2, company: 'Acme Software', position: 'Frontend Engineer', status: 'interview' }),
+  makeApplication({ id: 3, company: 'Globex Labs', position: 'Data Analyst', status: 'applied' }),
+  makeApplication({ id: 4, company: 'Initech', position: 'Backend Engineer', status: 'rejected' }),
+]
+
+const listedCompanies = () =>
+  within(screen.getByRole('list', { name: 'Candidaturas' }))
+    .getAllByRole('listitem')
+    .map((row) => row.querySelector('[title]')?.textContent)
+
+const statusButton = (name: string) =>
+  within(screen.getByRole('group', { name: 'Filtrar por estado' })).getByRole('button', { name })
+
+describe('ApplicationsPage search and filters', () => {
+  it('searches by company or position, case-insensitively, through the API', async () => {
+    const api = installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'BACKEND')
+
+    await waitFor(() => expect(listedCompanies()).toEqual(['Example Corp', 'Initech']))
+    expect(screen.getByText('2 resultados')).toBeInTheDocument()
+    // Debounced: one request for the final text, none per keystroke.
+    expect(api.listQueries().filter((q) => q.includes('q='))).toEqual(['q=BACKEND&limit=200'])
+
+    await user.clear(screen.getByLabelText('Buscar por empresa o puesto'))
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'acme')
+    await waitFor(() => expect(listedCompanies()).toEqual(['Acme Software']))
+    expect(screen.getByText('1 resultado')).toBeInTheDocument()
+  })
+
+  it('filters by status and marks the active option', async () => {
+    const api = installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    expect(statusButton('Todas')).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(statusButton('Aplicada'))
+
+    await waitFor(() => expect(listedCompanies()).toEqual(['Example Corp', 'Globex Labs']))
+    expect(statusButton('Aplicada')).toHaveAttribute('aria-pressed', 'true')
+    expect(statusButton('Todas')).toHaveAttribute('aria-pressed', 'false')
+    expect(api.listQueries()).toContain('status=applied&limit=200')
+
+    await user.click(statusButton('Rechazada'))
+    await waitFor(() => expect(listedCompanies()).toEqual(['Initech']))
+
+    await user.click(statusButton('Todas'))
+    await waitFor(() => expect(listedCompanies()).toHaveLength(4))
+  })
+
+  it('combines search and status filter', async () => {
+    const api = installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await user.click(statusButton('Aplicada'))
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'backend')
+
+    await waitFor(() => expect(listedCompanies()).toEqual(['Example Corp']))
+    expect(api.listQueries()).toContain('q=backend&status=applied&limit=200')
+    expect(screen.getByText('1 resultado')).toBeInTheDocument()
+  })
+
+  it('shows a no-results message and clears all filters', async () => {
+    const api = installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await user.click(statusButton('Oferta'))
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'zzz')
+
+    expect(await screen.findByText('No hay candidaturas que coincidan')).toBeInTheDocument()
+    expect(screen.getByText('0 resultados')).toBeInTheDocument()
+    // The empty state for a brand-new tracker is not shown while filtering.
+    expect(screen.queryByText('Todavía no hay candidaturas')).not.toBeInTheDocument()
+
+    // Two "Limpiar filtros" buttons: one in the filter bar, one in the no-results state.
+    const clearButtons = screen.getAllByRole('button', { name: 'Limpiar filtros' })
+    expect(clearButtons).toHaveLength(2)
+    await user.click(clearButtons[1])
+
+    await waitFor(() => expect(listedCompanies()).toHaveLength(4))
+    expect(screen.getByLabelText('Buscar por empresa o puesto')).toHaveValue('')
+    expect(statusButton('Todas')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
+    expect(api.listQueries().at(-1)).toBe('limit=200')
+  })
+
+  it('clears only the search text with the input clear button', async () => {
+    installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await user.click(statusButton('Aplicada'))
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'globex')
+    await waitFor(() => expect(listedCompanies()).toEqual(['Globex Labs']))
+
+    await user.click(screen.getByRole('button', { name: 'Borrar búsqueda' }))
+
+    await waitFor(() => expect(listedCompanies()).toEqual(['Example Corp', 'Globex Labs']))
+    expect(statusButton('Aplicada')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('hides the filter bar when there are no applications at all', async () => {
+    installFakeApi([])
+    renderPage()
+
+    expect(await screen.findByText('Todavía no hay candidaturas')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Buscar por empresa o puesto')).not.toBeInTheDocument()
+  })
+
+  it('keeps the list consistent with the active filter after editing', async () => {
+    installFakeApi(SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    await user.click(statusButton('Entrevista'))
+    await waitFor(() => expect(listedCompanies()).toEqual(['Acme Software']))
+
+    await user.click(screen.getByRole('button', { name: 'Editar Frontend Engineer en Acme Software' }))
+    await user.selectOptions(within(screen.getByRole('dialog')).getByLabelText('Estado'), 'offer')
+    await user.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    // Acme no longer has the "interview" status, so it leaves the filtered list.
+    expect(await screen.findByText('No hay candidaturas que coincidan')).toBeInTheDocument()
   })
 })
