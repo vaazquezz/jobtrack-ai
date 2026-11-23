@@ -10,6 +10,11 @@ interface FilterBarProps {
   onQueryChange: (query: string) => void
   onStatusChange: (status: ApplicationStatus | null) => void
   onClear: () => void
+  /**
+   * Show the status pills (default). The Kanban board hides them: its columns already
+   * split by status, and filtering would make moved cards vanish.
+   */
+  showStatus?: boolean
 }
 
 const STATUS_OPTIONS: { value: ApplicationStatus | null; label: string }[] = [
@@ -23,8 +28,9 @@ export function FilterBar({
   onQueryChange,
   onStatusChange,
   onClear,
+  showStatus = true,
 }: FilterBarProps) {
-  const hasFilters = query.trim() !== '' || status !== null
+  const hasFilters = query.trim() !== '' || (showStatus && status !== null)
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
@@ -58,26 +64,33 @@ export function FilterBar({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div role="group" aria-label="Filtrar por estado" className="flex flex-wrap gap-1.5">
-          {STATUS_OPTIONS.map((option) => {
-            const active = option.value === status
-            return (
-              <button
-                key={option.label}
-                type="button"
-                aria-pressed={active}
-                onClick={() => onStatusChange(option.value)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600 ${
-                  active
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
-                }`}
-              >
-                {option.label}
-              </button>
-            )
-          })}
-        </div>
+        {!showStatus && (
+          <p className="text-xs text-slate-500">
+            El tablero muestra todas las columnas de estado; la búsqueda sí se aplica.
+          </p>
+        )}
+        {showStatus && (
+          <div role="group" aria-label="Filtrar por estado" className="flex flex-wrap gap-1.5">
+            {STATUS_OPTIONS.map((option) => {
+              const active = option.value === status
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => onStatusChange(option.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600 ${
+                    active
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
         {hasFilters && (
           <button
             type="button"
