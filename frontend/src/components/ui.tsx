@@ -153,3 +153,11 @@ export const GripIcon = (p: { className?: string }) => (
     <circle cx="15" cy="18" r="1" />
   </Icon>
 )
+
+export const ColumnsIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="5" height="16" rx="1" />
+    <rect x="10" y="4" width="5" height="11" rx="1" />
+    <rect x="17" y="4" width="4" height="7" rx="1" />
+  </Icon>
+)

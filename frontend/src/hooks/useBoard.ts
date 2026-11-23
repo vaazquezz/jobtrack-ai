@@ -20,8 +20,15 @@ export interface MoveError {
  * `move` is optimistic: the card changes column at once, the new status is saved with
  * PATCH, and if the request fails the card goes back to its previous column and
  * `moveError` describes what failed so it can be retried.
+ *
+ * Nothing is fetched while `enabled` is false (the board tab is not visible).
  */
-export function useBoard(query: string, version: number, onChanged: () => void) {
+export function useBoard(
+  query: string,
+  version: number,
+  onChanged: () => void,
+  enabled = true,
+) {
   const search = query.trim()
   const [applications, setApplications] = useState<Application[]>([])
   const [total, setTotal] = useState(0)
@@ -33,6 +40,7 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
   const inFlight = useRef(new Map<number, ApplicationStatus>())
 
   useEffect(() => {
+    if (!enabled) return
     const controller = new AbortController()
     listApplications({ query: search }, controller.signal)
       .then((page) => {
@@ -51,7 +59,7 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
         setLoadState({ status: 'error', message })
       })
     return () => controller.abort()
-  }, [search, version, retryKey])
+  }, [search, version, retryKey, enabled])
 
   const retryLoad = () => {
     setLoadState({ status: 'loading' })
@@ -63,10 +71,11 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
       current.map((item) => (item.id === id ? { ...item, status } : item)),
     )
 
-  const move = async (application: Application, target: ApplicationStatus) => {
+  /** Move a card; resolves to true when the new status was saved. */
+  const move = async (application: Application, target: ApplicationStatus): Promise<boolean> => {
     const id = application.id
     const current = applications.find((item) => item.id === id) ?? application
-    if (current.status === target || inFlight.current.has(id)) return
+    if (current.status === target || inFlight.current.has(id)) return false
     const previous = current.status
 
     inFlight.current.set(id, target)
@@ -79,6 +88,7 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
       inFlight.current.delete(id)
       setApplications((items) => items.map((item) => (item.id === id ? saved : item)))
       onChanged()
+      return true
     } catch (error) {
       inFlight.current.delete(id)
       setStatus(id, previous)
@@ -87,6 +97,7 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
         target,
         message: error instanceof Error ? error.message : 'Error desconocido.',
       })
+      return false
     } finally {
       setPending((ids) => {
         const next = new Set(ids)
@@ -96,9 +107,8 @@ export function useBoard(query: string, version: number, onChanged: () => void) 
     }
   }
 
-  const retryMove = () => {
-    if (moveError) void move(moveError.application, moveError.target)
-  }
+  const retryMove = () =>
+    moveError ? move(moveError.application, moveError.target) : Promise.resolve(false)
 
   const dismissMoveError = () => setMoveError(null)
 

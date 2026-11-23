@@ -3,30 +3,37 @@ import { LIST_LIMIT, updateApplication } from '../api/applications'
 import { completeFollowUp } from '../api/followUps'
 import { useApplications } from '../hooks/useApplications'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { useBoard } from '../hooks/useBoard'
 import { useFollowUps } from '../hooks/useFollowUps'
 import { formatDate, todayIso } from '../lib/format'
 import { emptyFormValues, formValuesFromApplication } from '../lib/validation'
 import type { Application, ApplicationPayload, ApplicationStatus } from '../types/application'
+import { STATUS_LABELS } from '../types/application'
 import { ApplicationForm } from './ApplicationForm'
 import { ApplicationList } from './ApplicationList'
 import { ConfirmDialog } from './ConfirmDialog'
 import { FilterBar } from './FilterBar'
 import { ChangeFollowUpDateDialog, CompleteFollowUpDialog } from './FollowUpDialogs'
 import { FollowUpsView } from './FollowUpsView'
+import { KanbanBoard } from './KanbanBoard'
 import { Modal } from './Modal'
 import { EmptyState, ErrorState, LoadingState, NoResultsState } from './states'
-import { Button, PlusIcon } from './ui'
+import { AlertIcon, Button, CloseIcon, PlusIcon } from './ui'
 import { ViewTabs, type View } from './ViewTabs'
 
 type Editor = { mode: 'create' } | { mode: 'edit'; application: Application } | null
 
 type FollowUpAction = { kind: 'complete' | 'date'; application: Application } | null
 
-const FOLLOW_UPS_HASH = '#seguimientos'
+const VIEW_HASHES: Record<Exclude<View, 'list'>, string> = {
+  kanban: '#kanban',
+  'follow-ups': '#seguimientos',
+}
 
 /** The selected view is kept in the URL hash so a reload keeps it. */
 function initialView(): View {
-  return window.location.hash === FOLLOW_UPS_HASH ? 'follow-ups' : 'list'
+  const entry = Object.entries(VIEW_HASHES).find(([, hash]) => hash === window.location.hash)
+  return entry ? (entry[0] as View) : 'list'
 }
 
 function followUpSummary(counts: { overdue: number; today: number; upcoming: number }): string {
@@ -60,6 +67,9 @@ export function ApplicationsPage() {
     useApplications(filters, version)
   const followUps = useFollowUps(filters, version)
   const [view, setView] = useState<View>(initialView)
+  // The board applies the search only (its columns already split by status) and only
+  // fetches while its tab is visible.
+  const board = useBoard(activeQuery, version, bump, view === 'kanban')
   const [followUpAction, setFollowUpAction] = useState<FollowUpAction>(null)
   const [editor, setEditor] = useState<Editor>(null)
   const [toDelete, setToDelete] = useState<Application | null>(null)
@@ -90,7 +100,7 @@ export function ApplicationsPage() {
   const changeView = (next: View) => {
     setView(next)
     const url = window.location.pathname + window.location.search
-    window.history.replaceState(null, '', next === 'follow-ups' ? FOLLOW_UPS_HASH : url)
+    window.history.replaceState(null, '', next === 'list' ? url : VIEW_HASHES[next])
   }
 
   const handleSubmit = async (payload: ApplicationPayload) => {
@@ -154,6 +164,31 @@ export function ApplicationsPage() {
   const followUpState = followUps.state
   const followUpCounts = followUpState.status === 'ready' ? followUpState.data.counts : null
   const editApplication = (application: Application) => setEditor({ mode: 'edit', application })
+  const searching = activeQuery.trim() !== ''
+
+  const handleMove = async (application: Application, target: ApplicationStatus) => {
+    if (await board.move(application, target)) {
+      setNotice(`${application.company} movida a ${STATUS_LABELS[target]}.`)
+    }
+  }
+
+  const retryMove = async () => {
+    const failed = board.moveError
+    if (failed && (await board.retryMove())) {
+      setNotice(`${failed.application.company} movida a ${STATUS_LABELS[failed.target]}.`)
+    }
+  }
+
+  const subtitle = () => {
+    if (view === 'follow-ups' && followUpCounts) return followUpSummary(followUpCounts)
+    if (view === 'kanban' && board.loadState.status === 'ready') {
+      return searching
+        ? countLabel(board.total, true)
+        : `${board.total} ${board.total === 1 ? 'candidatura' : 'candidaturas'} en el tablero`
+    }
+    if (ready) return countLabel(total, filtered)
+    return 'Gestiona tus procesos de selección en un solo lugar.'
+  }
 
   return (
     <>
@@ -163,11 +198,7 @@ export function ApplicationsPage() {
             Candidaturas
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {view === 'follow-ups' && followUpCounts
-              ? followUpSummary(followUpCounts)
-              : ready
-                ? countLabel(total, filtered)
-                : 'Gestiona tus procesos de selección en un solo lugar.'}
+            {subtitle()}
           </p>
         </div>
         {ready && !noApplicationsAtAll && (
@@ -186,8 +217,63 @@ export function ApplicationsPage() {
             status={status}
             onQueryChange={setQuery}
             onStatusChange={setStatus}
-            onClear={clearFilters}
+            onClear={view === 'kanban' ? () => setQuery('') : clearFilters}
+            showStatus={view !== 'kanban'}
           />
+        </div>
+      )}
+
+      {view === 'kanban' && !noApplicationsAtAll && (
+        <div className="mt-4" role="tabpanel" aria-label="Kanban">
+          {board.moveError && (
+            <div
+              role="alert"
+              className="mb-4 flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 sm:flex-row sm:items-center"
+            >
+              <AlertIcon className="hidden h-5 w-5 shrink-0 text-rose-500 sm:block" />
+              <p className="flex-1">
+                No se pudo mover <strong>{board.moveError.application.company}</strong> a{' '}
+                {STATUS_LABELS[board.moveError.target]}: {board.moveError.message}. La tarjeta ha
+                vuelto a {STATUS_LABELS[board.moveError.application.status]}.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => void retryMove()}>
+                  Reintentar
+                </Button>
+                <button
+                  type="button"
+                  onClick={board.dismissMoveError}
+                  className="rounded-lg p-2 text-rose-500 hover:bg-rose-100"
+                  aria-label="Cerrar aviso"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+          )}
+          {board.loadState.status === 'loading' && <LoadingState />}
+          {board.loadState.status === 'error' && (
+            <ErrorState message={board.loadState.message} onRetry={board.retryLoad} />
+          )}
+          {board.loadState.status === 'ready' &&
+            (board.applications.length === 0 ? (
+              <NoResultsState onClear={() => setQuery('')} />
+            ) : (
+              <>
+                <KanbanBoard
+                  applications={board.applications}
+                  pending={board.pending}
+                  onMove={(application, target) => void handleMove(application, target)}
+                  onEdit={editApplication}
+                />
+                {board.applications.length < board.total && (
+                  <p className="mt-3 text-center text-xs text-slate-500">
+                    Mostrando las {LIST_LIMIT} candidaturas más recientes de {board.total}. Usa
+                    la búsqueda para encontrar el resto.
+                  </p>
+                )}
+              </>
+            ))}
         </div>
       )}
 
@@ -211,7 +297,7 @@ export function ApplicationsPage() {
       )}
 
       <div
-        hidden={view === 'follow-ups' && !noApplicationsAtAll}
+        hidden={view !== 'list' && !noApplicationsAtAll}
         className={`mt-4 transition-opacity ${refreshing ? 'opacity-60' : ''}`}
         aria-busy={refreshing || loadState.status === 'loading'}
       >
