@@ -5,8 +5,8 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 1 — applications REST API. The remaining features are planned and are
-> being built incrementally, one branch per phase.
+> **Status:** phase 2 — applications UI on top of the REST API. The remaining features are
+> planned and are being built incrementally, one branch per phase.
 
 ## Tech stack
 
@@ -15,13 +15,13 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS                |
 | Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings      |
 | Database | SQLite                                                  |
-| Quality  | pytest, ruff, oxlint, GitHub Actions                    |
+| Quality  | pytest, ruff, Vitest, Testing Library, oxlint, GitHub Actions |
 
 ## Roadmap
 
 - [x] **Phase 0** — Project skeleton, health endpoint and CI
 - [x] **Phase 1** — Applications REST API (CRUD)
-- [ ] **Phase 2** — Applications UI (list and form)
+- [x] **Phase 2** — Applications UI (list and form)
 - [ ] **Phase 3** — Search and filters
 - [ ] **Phase 4** — Follow-up reminders
 - [ ] **Phase 5** — Kanban board
@@ -38,6 +38,11 @@ jobtrack-ai/
 │   └── pyproject.toml  # dependencies, ruff and pytest config
 ├── frontend/           # React + TypeScript + Vite + Tailwind
 │   └── src/
+│       ├── api/        # typed fetch client for the FastAPI endpoints
+│       ├── components/ # page, list, form, modal and UI pieces (+ tests)
+│       ├── hooks/      # useApplications: loading and syncing the list
+│       ├── lib/        # validation (mirrors the backend) and formatting
+│       └── types/      # shared TypeScript types
 ├── .github/workflows/  # CI pipeline
 └── .env.example        # environment variables template (no secrets)
 ```
@@ -47,7 +52,7 @@ jobtrack-ai/
 ### Requirements
 
 - Python 3.11 or newer
-- Node.js 20.19+ or 22.12+
+- Node.js 22.22+ or 24.15+ (needed by the test tooling; the app itself runs on 20.19+)
 
 ### Backend
 
@@ -77,6 +82,21 @@ npm run dev
 
 Open <http://localhost:5173>. The dev server proxies `/api` requests to the backend,
 and the header badge shows whether the API is reachable.
+
+## Using the app
+
+- **List** — every application with company, position, applied date, follow-up date and
+  status. On phones each application is a card; on larger screens it is a table row.
+- **Add** — *Nueva candidatura* opens a form. Company and position are required; the
+  applied date defaults to today.
+- **Edit** — the pencil icon opens the same form pre-filled.
+- **Delete** — the bin icon asks for confirmation before anything is removed.
+- **Feedback** — loading placeholders, an error panel with *Reintentar* if the API is not
+  reachable, an empty state for the first visit and a short notice after each change.
+
+The form validates the same rules as the API (required fields, length limits, `http(s)`
+URLs, follow-up date not before the applied date) and still shows any error the API
+returns.
 
 ## API reference
 
@@ -146,6 +166,7 @@ pytest
 # Frontend
 cd frontend
 npm run lint
+npm test          # Vitest + Testing Library (jsdom)
 npm run build
 ```
 
