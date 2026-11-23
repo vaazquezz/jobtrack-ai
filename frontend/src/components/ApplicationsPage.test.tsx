@@ -170,8 +170,9 @@ describe('ApplicationsPage', () => {
       notes: 'Fictional test note',
       follow_up_date: null,
     })
-    expect(screen.getByText('Globex Labs')).toBeInTheDocument()
-    expect(screen.getByText('Por aplicar')).toBeInTheDocument()
+    const list = await screen.findByRole('list', { name: 'Candidaturas' })
+    expect(within(list).getByText('Globex Labs')).toBeInTheDocument()
+    expect(within(list).getByText('Por aplicar')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Candidatura añadida.')
   })
 
@@ -231,7 +232,9 @@ describe('ApplicationsPage', () => {
     const patch = api.calls.find((call) => call.method === 'PATCH')
     expect(patch?.url).toBe('/api/applications/1')
     expect(patch?.body).toMatchObject({ status: 'offer', notes: null })
-    expect(screen.getByText('Oferta')).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('list', { name: 'Candidaturas' })).getByText('Oferta'),
+    ).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Candidatura actualizada.')
   })
 

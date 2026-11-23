@@ -1,19 +1,34 @@
 import { useCallback, useEffect, useState } from 'react'
+import { LIST_LIMIT } from '../api/applications'
 import { useApplications } from '../hooks/useApplications'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { todayIso } from '../lib/format'
 import { emptyFormValues, formValuesFromApplication } from '../lib/validation'
-import type { Application, ApplicationPayload } from '../types/application'
+import type { Application, ApplicationPayload, ApplicationStatus } from '../types/application'
 import { ApplicationForm } from './ApplicationForm'
 import { ApplicationList } from './ApplicationList'
 import { ConfirmDialog } from './ConfirmDialog'
+import { FilterBar } from './FilterBar'
 import { Modal } from './Modal'
-import { EmptyState, ErrorState, LoadingState } from './states'
+import { EmptyState, ErrorState, LoadingState, NoResultsState } from './states'
 import { Button, PlusIcon } from './ui'
 
 type Editor = { mode: 'create' } | { mode: 'edit'; application: Application } | null
 
+/** Delay before a search is sent, so the API is not called on every keystroke. */
+export const SEARCH_DEBOUNCE_MS = 300
+
+function countLabel(count: number, filtered: boolean): string {
+  if (filtered) return count === 1 ? '1 resultado' : `${count} resultados`
+  return count === 1 ? '1 candidatura registrada' : `${count} candidaturas registradas`
+}
+
 export function ApplicationsPage() {
-  const { applications, loadState, reload, create, update, remove } = useApplications()
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<ApplicationStatus | null>(null)
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS)
+  const { applications, total, loadState, refreshing, reload, create, update, remove } =
+    useApplications({ query: debouncedQuery, status })
   const [editor, setEditor] = useState<Editor>(null)
   const [toDelete, setToDelete] = useState<Application | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -59,7 +74,16 @@ export function ApplicationsPage() {
     }
   }
 
-  const count = applications.length
+  const clearFilters = () => {
+    setQuery('')
+    setStatus(null)
+  }
+
+  // Filters that produced the results currently on screen (search is debounced).
+  const filtered = debouncedQuery.trim() !== '' || status !== null
+  const ready = loadState.status === 'ready'
+  const noApplicationsAtAll = ready && total === 0 && !filtered
+  const truncated = ready && applications.length < total
 
   return (
     <>
@@ -69,14 +93,12 @@ export function ApplicationsPage() {
             Candidaturas
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {loadState.status === 'ready'
-              ? count === 1
-                ? '1 candidatura registrada'
-                : `${count} candidaturas registradas`
+            {ready
+              ? countLabel(total, filtered)
               : 'Gestiona tus procesos de selección en un solo lugar.'}
           </p>
         </div>
-        {loadState.status === 'ready' && count > 0 && (
+        {ready && !noApplicationsAtAll && (
           <Button onClick={openCreate} className="w-full sm:w-auto">
             <PlusIcon />
             Nueva candidatura
@@ -84,18 +106,43 @@ export function ApplicationsPage() {
         )}
       </div>
 
-      <div className="mt-6">
+      {!noApplicationsAtAll && (
+        <div className="mt-6">
+          <FilterBar
+            query={query}
+            status={status}
+            onQueryChange={setQuery}
+            onStatusChange={setStatus}
+            onClear={clearFilters}
+          />
+        </div>
+      )}
+
+      <div
+        className={`mt-4 transition-opacity ${refreshing ? 'opacity-60' : ''}`}
+        aria-busy={refreshing || loadState.status === 'loading'}
+      >
         {loadState.status === 'loading' && <LoadingState />}
         {loadState.status === 'error' && <ErrorState message={loadState.message} onRetry={reload} />}
-        {loadState.status === 'ready' &&
-          (count === 0 ? (
+        {ready &&
+          (noApplicationsAtAll ? (
             <EmptyState onCreate={openCreate} />
+          ) : applications.length === 0 ? (
+            <NoResultsState onClear={clearFilters} />
           ) : (
-            <ApplicationList
-              applications={applications}
-              onEdit={(application) => setEditor({ mode: 'edit', application })}
-              onDelete={setToDelete}
-            />
+            <>
+              <ApplicationList
+                applications={applications}
+                onEdit={(application) => setEditor({ mode: 'edit', application })}
+                onDelete={setToDelete}
+              />
+              {truncated && (
+                <p className="mt-3 text-center text-xs text-slate-500">
+                  Mostrando las {LIST_LIMIT} candidaturas más recientes de {total}. Usa la
+                  búsqueda o el filtro de estado para encontrar el resto.
+                </p>
+              )}
+            </>
           ))}
       </div>
 
