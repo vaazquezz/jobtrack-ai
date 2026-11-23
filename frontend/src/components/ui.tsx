@@ -168,3 +168,23 @@ export const ChartIcon = (p: { className?: string }) => (
     <path d="M8 17v-5M13 17V8M18 17v-9" />
   </Icon>
 )
+
+export const SparklesIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+    <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
+  </Icon>
+)
+
+export const CopyIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+  </Icon>
+)
+
+export const ShieldIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </Icon>
+)
