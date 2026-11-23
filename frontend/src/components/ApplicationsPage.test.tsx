@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { todayIso } from '../lib/format'
 import type { Application } from '../types/application'
 import { ApplicationsPage } from './ApplicationsPage'
@@ -109,6 +109,19 @@ function renderPage() {
 
 // --- Tests ----------------------------------------------------------------------
 
+// Freeze "today" so follow-up classification is deterministic. Only Date is faked, so
+// timers (debounce, notices) and user-event keep working normally.
+const FAKE_NOW = new Date('2026-11-23T10:00:00')
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(FAKE_NOW)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('ApplicationsPage', () => {
   it('shows a loading state and then the empty state', async () => {
     installFakeApi([])
@@ -140,7 +153,7 @@ describe('ApplicationsPage', () => {
     expect(within(rows[0]).getByText('Example Corp')).toBeInTheDocument()
     expect(within(rows[0]).getByText('Backend Developer')).toBeInTheDocument()
     expect(within(rows[0]).getByText('1 nov 2026')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('Seguimiento: 8 nov 2026')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('Seguimiento vencido: 8 nov 2026')).toBeInTheDocument()
     expect(within(rows[0]).getByText('Aplicada')).toBeInTheDocument()
     expect(
       within(rows[0]).getByRole('link', { name: /Abrir oferta de Backend Developer/ }),

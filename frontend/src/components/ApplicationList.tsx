@@ -1,4 +1,5 @@
-import { formatDate } from '../lib/format'
+import { followUpState } from '../lib/followUps'
+import { formatDate, todayIso } from '../lib/format'
 import type { Application } from '../types/application'
 import { StatusBadge } from './StatusBadge'
 import { CalendarIcon, ExternalLinkIcon, PencilIcon, TrashIcon } from './ui'
@@ -12,7 +13,14 @@ interface ApplicationListProps {
 const iconButton =
   'rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600'
 
+const FOLLOW_UP_TEXT = {
+  overdue: { className: 'font-medium text-rose-600', prefix: 'Seguimiento vencido' },
+  today: { className: 'font-medium text-amber-700', prefix: 'Seguimiento hoy' },
+  upcoming: { className: 'text-slate-400', prefix: 'Seguimiento' },
+} as const
+
 export function ApplicationList({ applications, onEdit, onDelete }: ApplicationListProps) {
+  const today = todayIso()
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div
@@ -30,6 +38,8 @@ export function ApplicationList({ applications, onEdit, onDelete }: ApplicationL
         {applications.map((application) => {
           const applied = formatDate(application.applied_date)
           const followUp = formatDate(application.follow_up_date)
+          const followUpStyle =
+            FOLLOW_UP_TEXT[followUpState(application.follow_up_date, today) ?? 'upcoming']
           const label = `${application.position} en ${application.company}`
           return (
             <li
@@ -66,7 +76,9 @@ export function ApplicationList({ applications, onEdit, onDelete }: ApplicationL
                   {applied ?? <span className="text-slate-400">Sin fecha</span>}
                 </span>
                 {followUp && (
-                  <span className="block text-xs text-slate-400">Seguimiento: {followUp}</span>
+                  <span className={`block text-xs ${followUpStyle.className}`}>
+                    {followUpStyle.prefix}: {followUp}
+                  </span>
                 )}
               </div>
 
