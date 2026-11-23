@@ -114,7 +114,10 @@ class AnthropicProvider:
 
     def analyze(self, cv_text: str, job_text: str) -> AnalysisDraft:
         try:
-            response = self._client.beta.messages.create(
+            # Standard Messages endpoint, one model. No fallback to another model: a safety
+            # refusal is reported to the user, never retried elsewhere. The SDK only retries
+            # transient technical failures (connection errors, 408/409/429/5xx).
+            response = self._client.messages.create(
                 model=self.model,
                 max_tokens=MAX_TOKENS,
                 system=SYSTEM_PROMPT,
@@ -128,9 +131,6 @@ class AnthropicProvider:
                     "effort": "medium",
                     "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA},
                 },
-                # If a safety classifier declines, the API retries on a fallback model.
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
             )
         except anthropic.APITimeoutError as exc:
             raise AIProviderError(
@@ -167,8 +167,13 @@ class AnthropicProvider:
             ) from exc
 
         if response.stop_reason == "refusal":
+            # Shown as is: the request is not retried with another model.
             raise AIProviderError(
-                "refusal", "El modelo de IA ha rechazado analizar estos textos.", 502
+                "refusal",
+                "El modelo de IA ha rechazado analizar estos textos por sus políticas de "
+                "seguridad. No se ha reintentado con otro modelo; puedes revisar los textos o "
+                "usar el análisis básico.",
+                422,
             )
         if response.stop_reason == "max_tokens":
             raise AIProviderError(
