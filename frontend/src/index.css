@@ -7,3 +7,27 @@
 body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
+
+/*
+ * One markup, two layouts: a stacked card on mobile and a table-like row from md up.
+ * Children place themselves with [grid-area:<name>].
+ * Kept in the components layer so utilities such as `hidden md:grid` can override it.
+ */
+@layer components {
+  .application-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'company status'
+      'position position'
+      'date actions';
+  }
+
+  @media (min-width: 48rem) {
+    .application-row {
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) 9.5rem 8.5rem 5.5rem;
+      grid-template-areas: 'company position date status actions';
+      align-items: center;
+    }
+  }
+}
