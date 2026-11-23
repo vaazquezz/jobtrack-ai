@@ -47,3 +47,20 @@ export interface ApplicationFilters {
   query?: string
   status?: ApplicationStatus | null
 }
+
+export interface FollowUpCounts {
+  overdue: number
+  today: number
+  upcoming: number
+  /** overdue + today: follow-ups that need attention now. */
+  pending: number
+}
+
+/** Response of GET /api/follow-ups. */
+export interface FollowUpOverview {
+  today: string
+  overdue: Application[]
+  due_today: Application[]
+  upcoming: Application[]
+  counts: FollowUpCounts
+}
