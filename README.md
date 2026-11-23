@@ -2,76 +2,177 @@
 
 [![CI](https://github.com/vaazquezz/jobtrack-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/vaazquezz/jobtrack-ai/actions/workflows/ci.yml)
 
-Personal web app to manage a job search: track applications, visualise them on a Kanban
-board, review statistics and, in a later phase, analyse job offers against a CV with AI.
+**A personal job-search tracker.** Keep every application in one place, move it through a
+Kanban board, never miss a follow-up, see how your search is going, and compare your CV
+with a job offer — with a basic analysis that works offline, or with Claude if you add an
+API key.
 
-> **Status:** phase 7 — AI job offer analysis. Built incrementally, one branch per phase.
+It is a full-stack portfolio project (React + TypeScript and FastAPI + SQLite) built in
+small, tested phases, each one a pull request with CI. The interface is in Spanish; the
+code and documentation are in English.
+
+![Applications list](docs/screenshots/applications.png)
+
+> All screenshots use the fictional demo data (`python -m app.seed`) and fictional
+> texts. No personal data, real CVs or API keys appear anywhere in the repository.
+
+## Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Tech stack](#tech-stack)
+- [Architecture](#architecture)
+- [Run it on your computer](#run-it-on-your-computer)
+- [Tests and quality checks](#tests-and-quality-checks)
+- [How the job offer analysis works](#how-the-job-offer-analysis-works)
+- [Known limitations](#known-limitations)
+- [Technical decisions and learnings](#technical-decisions-and-learnings)
+- [Security and privacy](#security-and-privacy)
+- [Future improvements](#future-improvements)
+- [Development workflow](#development-workflow)
+
+## Features
+
+- **Applications** — create, edit and delete applications (company, position, URL,
+  applied date, status, notes, follow-up date). The form validates the same rules as the
+  API and still shows any error the API returns. Deleting asks for confirmation.
+- **Search and filters** — search by company or position (ignoring case and accents) and
+  filter by status; results come from the API as you type.
+- **Kanban board** — one column per status. Drag a card to change its status, or use the
+  *Mover a* selector / keyboard (space, ←/→, space). Moves are shown at once and rolled
+  back with a *Reintentar* alert if the server fails.
+- **Follow-ups** — applications with a follow-up date grouped into overdue, today and
+  upcoming, with a pending counter on the tab. Mark one as done (it is noted in the
+  application), reschedule it with quick options or remove it.
+- **Statistics** — KPIs, counts per status, and charts of weekly activity, status
+  distribution and interviews/offers for the last 30 days, 90 days or all time. Every
+  chart has an accessible *Ver datos* table.
+- **Job offer analysis** — paste a CV and an offer to see what the CV demonstrates (with
+  the quote that proves it), what is missing or ambiguous, the relevant skills,
+  recommendations for the CV and the interview, and an orientative score.
+- **Everything stays in sync** — any change in one tab refreshes the others; the selected
+  tab is kept in the URL (`#kanban`, `#seguimientos`, `#estadisticas`, `#analisis`).
+- **Responsive and accessible** — cards on phones and a table on larger screens, a board
+  that scrolls column by column, labelled controls, dialogs that close with Escape, and
+  loading, empty and error states with *Reintentar*.
+
+## Screenshots
+
+| Kanban board | Follow-ups |
+| --- | --- |
+| ![Kanban board](docs/screenshots/kanban.png) | ![Follow-ups](docs/screenshots/follow-ups.png) |
+
+| Statistics | Job offer analysis (basic mode) |
+| --- | --- |
+| ![Statistics](docs/screenshots/statistics.png) | ![Analysis result](docs/screenshots/analysis.png) |
+
+<p align="center">
+  <img src="docs/screenshots/mobile-kanban.png" alt="Kanban board on a phone" width="260">
+</p>
 
 ## Tech stack
 
-| Layer    | Technology                                              |
-| -------- | ------------------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, dnd-kit, Recharts |
-| Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings, Anthropic SDK |
-| Database | SQLite                                                  |
+| Layer    | Technology |
+| -------- | ---------- |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, dnd-kit (drag and drop), Recharts (charts) |
+| Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings, official Anthropic SDK |
+| Database | SQLite |
 | Quality  | pytest, ruff, Vitest, Testing Library, oxlint, GitHub Actions |
 
-## Roadmap
+## Architecture
 
-- [x] **Phase 0** — Project skeleton, health endpoint and CI
-- [x] **Phase 1** — Applications REST API (CRUD)
-- [x] **Phase 2** — Applications UI (list and form)
-- [x] **Phase 3** — Search and filters
-- [x] **Phase 4** — Follow-up reminders
-- [x] **Phase 5** — Kanban board
-- [x] **Phase 6** — Statistics dashboard
-- [x] **Phase 7** — AI job offer analysis and CV comparison
+```mermaid
+flowchart LR
+    UI["React app<br/>(Vite dev server :5173)"] -- "/api (proxied)" --> API["FastAPI<br/>(uvicorn :8000)"]
+    API --> DB[("SQLite<br/>backend/jobtrack.db")]
+    API --> LOCAL["Local keyword analysis<br/>(no external calls)"]
+    API -. "only with ANTHROPIC_API_KEY<br/>and user consent" .-> CLAUDE["Claude API"]
+```
 
-## Project structure
+- The **frontend** is a single page with five tabs. A small typed `fetch` client talks to
+  the API, and custom hooks (`useApplications`, `useBoard`, `useFollowUps`, `useStats`)
+  load each view. A shared version counter, bumped after every change, keeps all tabs in
+  sync. The statistics tab (and Recharts) is lazy-loaded.
+- The **backend** exposes a REST API under `/api`, split into routers (applications,
+  follow-ups, stats, analysis). Business rules — validation, follow-up grouping,
+  statistics, the analysis score — live in the backend, so the UI only displays them.
+- The **analysis** goes through a small `AIProvider` interface with two implementations:
+  a local keyword analyser and an Anthropic provider. A service on top verifies the
+  result and computes the score, whichever provider ran.
 
 ```
 jobtrack-ai/
-├── backend/            # FastAPI application
-│   ├── app/            # main.py, config.py, database.py, models.py, routers/
-│   ├── tests/          # pytest suite (isolated in-memory SQLite)
-│   └── pyproject.toml  # dependencies, ruff and pytest config
-├── frontend/           # React + TypeScript + Vite + Tailwind
+├── backend/
+│   ├── app/
+│   │   ├── main.py, config.py, database.py, models.py, filters.py
+│   │   ├── routers/      # applications, follow_ups, stats, analysis
+│   │   ├── analysis/     # provider interface, local analyser, Anthropic provider, service
+│   │   └── seed.py       # optional fictional demo data
+│   ├── tests/            # pytest suite (isolated SQLite, fake AI providers)
+│   └── pyproject.toml    # dependencies, ruff and pytest config
+├── frontend/
 │   └── src/
-│       ├── api/        # typed fetch client for the FastAPI endpoints
-│       ├── components/ # page, list, form, modal and UI pieces (+ tests)
-│       ├── hooks/      # useApplications: loading and syncing the list
-│       ├── lib/        # validation (mirrors the backend) and formatting
-│       └── types/      # shared TypeScript types
-├── .github/workflows/  # CI pipeline
-└── .env.example        # environment variables template (no secrets)
+│       ├── api/          # typed fetch client for each endpoint
+│       ├── components/   # page, views (list, Kanban, follow-ups, stats, analysis), dialogs
+│       ├── hooks/        # data loading for each view
+│       ├── lib/          # validation, formatting, Kanban/stats/follow-up helpers
+│       └── types/        # shared TypeScript types
+├── docs/
+│   ├── API.md            # full API reference and metric definitions
+│   └── screenshots/
+├── .github/workflows/    # CI pipeline
+└── .env.example          # environment variables template (no secrets)
 ```
 
-## Getting started
+The full endpoint list, request fields, error codes and metric definitions are in
+**[docs/API.md](docs/API.md)**. With the backend running, interactive docs are at
+<http://localhost:8000/docs>.
 
-### Requirements
+## Run it on your computer
 
-- Python 3.11 or newer
-- Node.js 22.22+ or 24.15+ (needed by the test tooling; the app itself runs on 20.19+)
+The app runs locally with two processes: the backend (API + database) and the frontend
+(the web page). Nothing is deployed anywhere.
 
-### Backend
+### Prerequisites
+
+- **Python 3.11 or newer** — check with `python3 --version` (on Windows: `py --version`).
+- **Node.js 22.22+ or 24.15+** — check with `node --version`. (The app itself runs on
+  20.19+, but the test tooling needs these versions.)
+- **Git**, to clone the repository.
+
+```bash
+git clone https://github.com/vaazquezz/jobtrack-ai.git
+cd jobtrack-ai
+```
+
+### 1. Backend (first terminal)
+
+macOS / Linux:
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
-cp ../.env.example .env            # optional, defaults work out of the box
+cp ../.env.example .env        # optional: the defaults work without it
 uvicorn app.main:app --reload
 ```
 
-The API runs at <http://localhost:8000>. Interactive docs: <http://localhost:8000/docs>.
+Windows (PowerShell):
 
-Data is stored in `backend/jobtrack.db` (SQLite, git-ignored). The table is created
-automatically on startup; change the location with `DATABASE_URL`.
+```powershell
+cd backend
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+copy ..\.env.example .env      # optional: the defaults work without it
+uvicorn app.main:app --reload
+```
 
-### Frontend
+The API runs at <http://localhost:8000> (docs at <http://localhost:8000/docs>). The
+database is created automatically in `backend/jobtrack.db`, which is git-ignored.
 
-In a second terminal:
+### 2. Frontend (second terminal)
 
 ```bash
 cd frontend
@@ -79,293 +180,182 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. The dev server proxies `/api` requests to the backend,
-and the header badge shows whether the API is reachable.
+Open <http://localhost:5173>. The dev server forwards `/api` requests to the backend, and
+the badge in the header shows whether the API is reachable.
 
-## Using the app
+### 3. Optional: load the demo data
 
-- **List** — every application with company, position, applied date, follow-up date and
-  status. On phones each application is a card; on larger screens it is a table row.
-- **Add** — *Nueva candidatura* opens a form. Company and position are required; the
-  applied date defaults to today.
-- **Edit** — the pencil icon opens the same form pre-filled.
-- **Delete** — the bin icon asks for confirmation before anything is removed.
-- **Kanban** — the *Kanban* tab shows one column per status (*Por aplicar*, *Aplicada*,
-  *Entrevista*, *Oferta*, *Rechazada*) with its count. Cards show company, position,
-  applied date and follow-up date. Drag a card to another column to change its status;
-  it is saved automatically through the API. Without dragging, use the *Mover a* selector
-  on each card (handy on phones and with a keyboard or screen reader), or focus the
-  card's grip handle, press space, move with ←/→ and press space again. The move is shown
-  at once; if the server fails, the card goes back to its column and an alert offers
-  *Reintentar*. The search applies to the board, but the status filter does not (the
-  columns already split by status, and a filter would make moved cards vanish). On
-  narrow screens only the board scrolls sideways, one column at a time.
-- **Follow-ups** — the *Seguimientos* tab lists every application with a follow-up date,
-  grouped into *Vencidos* (overdue), *Para hoy* and *Próximos*, with relative dates
-  ("Hace 3 días", "Mañana"). Its counter shows how many are pending (overdue + today),
-  in red when any is overdue. From there you can mark a follow-up as done, change or
-  remove its date (with quick options: 3 days, 1 week, 2 weeks) or edit the application.
-  The list also flags overdue and due-today follow-ups. The search and status filters
-  apply to the list and follow-ups tabs, and the selected tab is kept in the URL
-  (`#kanban`, `#seguimientos`, `#estadisticas`, `#analisis`).
-- **Statistics** — the *Estadísticas* tab shows KPIs, counts per status and three charts
-  (weekly activity, distribution by status, interviews and offers) for the last 30 days,
-  the last 90 days or the whole history. Each chart has a hover tooltip and a *Ver datos*
-  table. The numbers reload after any change made in the other tabs. Search and status
-  filters do not apply here. See [Statistics](#statistics) for the definitions.
-- **AI analysis** — the *Análisis IA* tab compares a pasted CV with a job offer and lists
-  what the CV demonstrates (with the quote that proves it), what is missing, what is
-  ambiguous, the relevant skills, and recommendations for the CV and the interview, with an
-  orientative score and a *Copiar resultado* button. It works without any key (basic
-  keyword analysis) and can use Claude when the backend has an API key. See
-  [AI analysis](#ai-analysis).
-- **Search and filter** — type in the search box to find applications by company or
-  position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
-  *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
-  from the API as you type, without reloading the page. *Limpiar filtros* resets both, and
-  a message is shown when nothing matches.
-- **Feedback** — loading placeholders, an error panel with *Reintentar* if the API is not
-  reachable, an empty state for the first visit and a short notice after each change.
-
-The form validates the same rules as the API (required fields, length limits, `http(s)`
-URLs, follow-up date not before the applied date) and still shows any error the API
-returns.
-
-## API reference
-
-All endpoints are under `/api`. Request and response bodies are JSON.
-
-| Method   | Endpoint                  | Description                     | Success |
-| -------- | ------------------------- | ------------------------------- | ------- |
-| `GET`    | `/api/health`             | Liveness check                  | `200`   |
-| `POST`   | `/api/applications`       | Create an application           | `201`   |
-| `GET`    | `/api/applications`       | List and filter, newest first   | `200`   |
-| `GET`    | `/api/applications/{id}`  | Get one application             | `200`   |
-| `PATCH`  | `/api/applications/{id}`  | Update the fields sent          | `200`   |
-| `DELETE` | `/api/applications/{id}`  | Delete an application           | `204`   |
-| `GET`    | `/api/follow-ups`         | Follow-ups grouped by date      | `200`   |
-| `POST`   | `/api/applications/{id}/follow-up/complete` | Mark a follow-up as done | `200` |
-| `GET`    | `/api/stats`              | Statistics for a period         | `200`   |
-| `GET`    | `/api/analysis/config`    | Available analysis modes        | `200`   |
-| `POST`   | `/api/analysis`           | Analyse a CV against an offer   | `200`   |
-
-### Listing, search and filters
-
-`GET /api/applications` accepts these query parameters, which can be combined:
-
-| Parameter | Description                                                                 |
-| --------- | --------------------------------------------------------------------------- |
-| `q`       | Text to find in `company` or `position`. Case- and accent-insensitive (`telefónica` matches `TELEFÓNICA`), surrounding spaces are ignored, max 200 characters |
-| `status`  | One of `wishlist`, `applied`, `interview`, `offer`, `rejected`              |
-| `offset`  | Number of results to skip (default `0`)                                     |
-| `limit`   | Maximum number of results (default `100`, max `200`)                        |
-
-The response header `X-Total-Count` contains the total number of matches, ignoring
-`offset` and `limit`.
+To try the app with realistic content, load 14 fictional applications (every status,
+overdue/today/upcoming follow-ups, a few months of history). From `backend/` with the
+virtual environment active:
 
 ```bash
-curl -i "http://localhost:8000/api/applications?q=backend&status=applied&limit=20"
+python -m app.seed
 ```
 
-### Application fields
+It **never overwrites anything**: if the database already has applications, it adds
+nothing. Dates are relative to today, so it always looks current. To start again from
+scratch, stop the backend and delete `backend/jobtrack.db`.
 
-| Field            | Type                     | Required | Rules                                                  |
-| ---------------- | ------------------------ | -------- | ------------------------------------------------------ |
-| `company`        | string                   | yes      | 1–200 characters, surrounding spaces are trimmed       |
-| `position`       | string                   | yes      | 1–200 characters, surrounding spaces are trimmed       |
-| `url`            | string \| null           | no       | Valid `http` or `https` URL, max 2000 characters       |
-| `applied_date`   | date (`YYYY-MM-DD`) \| null | no    |                                                        |
-| `status`         | enum                     | no       | `wishlist`, `applied` (default), `interview`, `offer`, `rejected` |
-| `notes`          | string \| null           | no       | Max 5000 characters; blank text is stored as `null`    |
-| `follow_up_date` | date (`YYYY-MM-DD`) \| null | no    | Cannot be earlier than `applied_date`                  |
+### Configuration
 
-Responses also include the read-only fields `id`, `created_at` and `updated_at` (UTC).
-In `PATCH`, only the fields sent are changed; optional fields can be cleared with `null`,
-but `company`, `position` and `status` cannot be `null`.
-
-### Follow-ups
-
-`GET /api/follow-ups` returns the applications that have a `follow_up_date`, grouped
-relative to a reference day and sorted by date:
-
-```json
-{
-  "today": "2026-11-23",
-  "overdue": [/* follow_up_date < today */],
-  "due_today": [/* follow_up_date == today */],
-  "upcoming": [/* follow_up_date > today */],
-  "counts": { "overdue": 1, "today": 1, "upcoming": 2, "pending": 2 }
-}
-```
-
-It accepts `today` (`YYYY-MM-DD`, defaults to the server date; the UI sends the user's
-local date so "today" matches their time zone) and the same `q` and `status` filters as
-the list.
-
-**Marking a follow-up as done** — `POST /api/applications/{id}/follow-up/complete`
-with an optional body `{"completed_on": "2026-11-23", "next_follow_up_date": "2026-11-30"}`:
-
-- clears `follow_up_date`, so the follow-up is no longer pending (or sets it to
-  `next_follow_up_date` to schedule the next one in the same step);
-- appends `Seguimiento realizado el 23/11/2026.` to the notes, as a simple history
-  (skipped only if the notes are already at the 5000-character limit);
-- returns `409` if the application has no pending follow-up, and `422` if the next date
-  is before `applied_date`.
-
-This design needs no new database columns, so existing `jobtrack.db` files keep working
-without a migration. Changing or removing a follow-up date uses the normal `PATCH`.
-
-There are no emails, push notifications or background jobs: the counter and the
-*Seguimientos* tab are the reminders.
-
-### Statistics
-
-`GET /api/stats?period=30d|90d|all&today=YYYY-MM-DD` (defaults: `all` and the server
-date; the UI sends the user's local date) returns totals, counts per status, rates and
-submitted applications per week. Everything is computed from what is stored in SQLite.
-
-| Metric | Definition |
-| --- | --- |
-| Period | An application is included when its **applied date**, or its creation date if it has none, is between the period start and `today` (inclusive). 30 days = today and the 29 days before. Future dates are excluded. |
-| Candidaturas (`total`) | Applications in the period, every status. |
-| Enviadas (`submitted`) | Applications in any status except *Por aplicar* (`wishlist`). |
-| Con respuesta (`responded`) | Submitted applications currently in *Entrevista*, *Oferta* or *Rechazada*. |
-| Entrevistas (`interviews`) | Submitted applications currently in *Entrevista* or *Oferta*. |
-| Ofertas (`offers`) | Applications currently in *Oferta*. |
-| Tasa de respuesta | `responded / submitted` |
-| Tasa de entrevistas | `interviews / submitted` |
-| Tasa de ofertas | `offers / submitted` |
-| Evolución semanal (`weekly`) | Submitted applications per week (Monday to Sunday) by **applied date**, including weeks with none. The first and last weeks of a 30/90-day period may be partial. |
-
-Edge cases: with no submitted applications the rates are `null` (shown as "—"), not a
-division by zero. Submitted applications without an applied date are left out of the
-weekly chart and counted in `undated_submitted` instead of being given a date. A period
-without applications returns zeros and the UI shows an empty state.
-
-**Limitations.** Only the *current* status of each application is stored, not a history
-of status changes or the dates of responses, interviews or offers. The metrics therefore
-describe where applications are today:
-
-- An application rejected after an interview counts as a response but not as an
-  interview, so the interview rate is a lower bound.
-- Applications marked *Rechazada* without the company replying still count as responses.
-- Interviews and offers cannot be placed on a timeline; only submissions (applied date)
-  can, which is why the weekly chart shows submissions only.
-- Creation dates are stored in UTC, so an application without an applied date created
-  late in the evening may fall on the next day.
-
-### AI analysis
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/api/analysis/config` | Whether AI analysis is available, and which provider/model (never the key) |
-| `POST` | `/api/analysis` | Analyse `{cv_text, job_text, mode, consent_external}` |
-
-**Two modes.**
-
-| Mode | When | What it does |
-| --- | --- | --- |
-| `local` (default) | Always available | Matches ~55 known technologies and competencies (with aliases, ignoring case and accents) between the offer and the CV. No AI and no external service: the texts never leave the server. It cannot understand context, synonyms outside its catalogue or requirements phrased differently, and it always marks years of experience and degrees as ambiguous. |
-| `ai` | Only if `ANTHROPIC_API_KEY` is set on the backend, and `consent_external: true` | Sends both texts to Claude through the official Anthropic SDK. The response is constrained to a JSON schema and validated again with Pydantic. |
-
-**How the result is kept honest (both modes).**
-
-- Every requirement is classified as **met** (demonstrated by the CV), **missing** or
-  **ambiguous**. A *met* requirement must quote text that really appears in the CV; the
-  backend checks it and downgrades any requirement whose quote is not in the CV to
-  *ambiguous*, so invented experience is never reported as demonstrated.
-- The prompt tells the model to use only what the CV says, to treat the texts as data
-  (ignoring instructions inside them), to prefer *ambiguous* when unsure and never to
-  recommend claiming experience the CV does not show.
-- **Orientative score** = (met + 0.5 × ambiguous) ÷ requirements analysed × 100, computed by
-  the backend from the lists (not by the model). It only summarises this comparison: it is
-  **not** a probability of being hired. With no requirements detected it is `null`.
-
-**Privacy.** The CV and the offer are processed in memory: they are not stored in the
-database, logged or saved in the browser. In the UI, AI mode shows a confirmation dialog
-explaining that the full texts will be sent to an external provider before anything is
-sent; the backend also refuses `mode: "ai"` without `consent_external: true` (`422`).
-
-**Configuration** (`backend/.env`, see `.env.example`; restart the backend after changes):
+All settings are optional and go in `backend/.env` (see [`.env.example`](.env.example));
+restart the backend after changing them.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | *(empty)* | Enables AI mode. Empty = local analysis only. Read only by the backend, never sent to the frontend. |
-| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model ID (Claude Opus 5.5, listed in Anthropic's models overview). Any current Claude API model ID works, e.g. `claude-sonnet-5-5` or `claude-haiku-5-5`. |
-| `AI_TIMEOUT_SECONDS` | `60` | Time to wait for the provider before failing. |
-| `AI_MAX_RETRIES` | `2` | SDK retries on transient failures only (connection errors, 408/409/429, 5xx). Safety refusals are never retried. |
+| `DATABASE_URL` | `sqlite:///./jobtrack.db` | SQLite file location |
+| `CORS_ORIGINS` | `http://localhost:5173` | Origins allowed to call the API |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables AI analysis; empty = basic analysis only |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model used for AI analysis |
+| `AI_TIMEOUT_SECONDS` | `60` | Time to wait for the AI provider |
+| `AI_MAX_RETRIES` | `2` | Retries on transient technical failures only |
 
-To enable AI mode, create an API key in the Anthropic Console, put it in `backend/.env`
-as `ANTHROPIC_API_KEY=...` and restart `uvicorn`. Never commit the key: `.env` is
-git-ignored. Each AI analysis is a paid API call billed to that key.
-
-**Limits and errors.** Each text must have 30–20,000 characters (`422` otherwise). AI
-mode without a key returns `409`. Provider failures return a Spanish message: timeout
-`504`, rate limit `429`, and invalid key, other API errors, connection errors, truncated
-responses or responses that do not match the schema `502`.
-
-**Retries and safety refusals.** Only transient technical failures are retried, by the
-SDK itself (connection errors, 408/409/429 and 5xx; `AI_MAX_RETRIES` times). A safety
-refusal from the model (`stop_reason: "refusal"`) is **not** retried and is **never**
-sent to another model: the user sees a `422` explaining that the model declined, and can
-review the texts or use the basic analysis. The request uses the standard Messages
-endpoint with the single configured model and no server-side fallbacks. The app does not
-fall back silently from AI to the local mode either: the user decides.
-
-### Errors
-
-| Status | When                                                              |
-| ------ | ----------------------------------------------------------------- |
-| `404`  | The application id does not exist                                 |
-| `409`  | Marking a follow-up as done when the application has none         |
-| `422`  | Invalid body or query parameters (missing field, bad URL, unknown status, inconsistent dates, search text too long, …) |
-
-### Example
+## Tests and quality checks
 
 ```bash
-curl -X POST http://localhost:8000/api/applications \
-  -H "Content-Type: application/json" \
-  -d '{
-        "company": "Example Corp",
-        "position": "Backend Developer",
-        "url": "https://example.com/jobs/123",
-        "applied_date": "2026-11-01",
-        "status": "applied",
-        "follow_up_date": "2026-11-08"
-      }'
-
-curl -X PATCH http://localhost:8000/api/applications/1 \
-  -H "Content-Type: application/json" \
-  -d '{"status": "interview"}'
-```
-
-## Quality checks
-
-```bash
-# Backend
-cd backend
+# Backend (from backend/, virtual environment active)
 ruff check . && ruff format --check .
 pytest
 
-# Frontend
-cd frontend
+# Frontend (from frontend/)
 npm run lint
 npm test          # Vitest + Testing Library (jsdom)
-npm run build
+npm run build     # type-check (tsc -b) and production build
 ```
 
-The same checks run automatically in GitHub Actions on every pull request.
+The same checks run in GitHub Actions on every pull request and on pushes to `main`. The backend tests
+use an isolated SQLite database and fake AI providers; the frontend tests mock the API and
+freeze the date, so results do not depend on the day they run. No test calls a real (paid)
+API.
+
+## How the job offer analysis works
+
+In the *Análisis IA* tab you paste a CV and a job offer (30–20,000 characters each) and
+choose a mode:
+
+**Basic analysis (no AI, always available).** The backend looks for about 50 known
+technologies and competencies (with aliases, ignoring case and accents) in the offer, and
+checks whether each one appears in the CV. Nothing leaves your computer. It is fast and
+free, but it does not understand context, unusual synonyms or requirements phrased
+differently, and it always marks years of experience and degrees as ambiguous — the UI
+says so next to every result.
+
+**AI analysis (optional).** If `ANTHROPIC_API_KEY` is set in `backend/.env`, the AI mode
+becomes available. Before anything is sent, the UI asks you to confirm that the full texts
+will go to an external provider (the backend also rejects AI requests without that
+consent). The backend sends both texts to Claude through the official Anthropic SDK, with
+instructions to use only what the CV says and to treat the texts as data. The answer is
+constrained to a JSON schema and validated again with Pydantic. Each AI analysis is a paid
+API call billed to your key.
+
+To enable it: create a key in the Anthropic Console, add `ANTHROPIC_API_KEY=...` to
+`backend/.env` (never to Git — the file is ignored) and restart the backend.
+
+**In both modes:**
+
+- Each requirement is classified as **met**, **missing** or **ambiguous**. A *met*
+  requirement must quote text that really appears in the CV; the backend checks the quote
+  and downgrades it to *ambiguous* if it is not there, so invented experience is never
+  reported as demonstrated.
+- The **orientative score** = (met + 0.5 × ambiguous) ÷ requirements analysed × 100, computed
+  by the backend, not by the model. It summarises this comparison only — it is not a
+  probability of being hired.
+- The CV and the offer are processed in memory: they are not stored in the database,
+  logged or saved in the browser.
+- Errors (timeouts, rate limits, invalid key, unexpected responses) are shown as clear
+  messages. If the model declines a request for safety reasons, the user is told so; the
+  request is not retried with another model, and the app never switches to the basic mode
+  silently.
+
+More detail, including status codes, is in [docs/API.md](docs/API.md#ai-analysis).
+
+## Known limitations
+
+- **Single user, local only.** There is no authentication; it is designed to run on your
+  own computer, not on a shared server.
+- **No status history.** Only the current status of each application is stored, so
+  statistics describe where applications are today. For example, an application rejected
+  after an interview counts as a response but not as an interview, and interviews cannot
+  be placed on a timeline. See the [metric definitions](docs/API.md#statistics).
+- **No database migrations.** The schema is created on startup; a future change to the
+  models would need a migration tool (see [future improvements](#future-improvements)).
+- **Basic analysis is keyword matching**, with the limits described above. The AI mode
+  needs your own API key and costs money per analysis.
+- **CV as plain text.** You paste the text; PDF or Word files are not read.
+- **No notifications.** Follow-up reminders live in the app (counter and tab); there are
+  no emails or push notifications.
+- The interface is in Spanish only.
+
+## Technical decisions and learnings
+
+- **Business rules in the backend.** Validation, follow-up grouping, statistics and the
+  analysis score are computed by the API and covered by pytest. The frontend mirrors the
+  form validation for instant feedback but still shows the API's errors.
+- **No schema changes after phase 1.** Follow-ups reuse `follow_up_date` and append a line
+  to the notes when completed, instead of adding tables. Without a migration tool, this
+  keeps existing `jobtrack.db` files working.
+- **Honest metrics.** Rates are `null` (shown as "—") when there is nothing to divide by,
+  and undated applications are counted separately instead of being given an invented
+  date. The limits of the data are documented rather than hidden.
+- **Don't trust the model blindly.** Structured output plus Pydantic validation, a check
+  that every quoted piece of evidence is really in the CV, and a score computed from the
+  lists rather than asked for. Safety refusals are shown to the user and never sent to
+  another model; only transient technical failures are retried.
+- **Provider interface.** The `AIProvider` protocol made it easy to ship a useful local
+  mode first and to test the AI path with fake clients, without paid calls.
+- **Optimistic Kanban with rollback.** Moves feel instant, but a failed request puts the
+  card back and offers a retry. The status filter is deliberately ignored on the board so
+  moved cards do not vanish.
+- **Accessibility from the start.** Drag and drop has a selector and keyboard alternative,
+  charts have data tables, and tests query elements by role and label.
+- **Small bundle where it matters.** Recharts is lazy-loaded with the statistics tab.
+- **Deterministic tests.** Frontend tests freeze `Date`; backend endpoints accept a
+  `today` parameter. Key tests were checked by temporarily breaking the code they cover
+  to make sure they fail.
+- **Small phases, one PR each.** Every phase was reviewed through a pull request with CI,
+  which kept `main` working at all times.
+
+## Security and privacy
+
+- No secrets in the repository: local settings live in `backend/.env`, which is
+  git-ignored; `.env.example` contains no values for secrets.
+- The Anthropic key is read only by the backend as a secret value (not printed in logs or
+  settings dumps) and never reaches the browser; `/api/analysis/config` only says whether
+  AI is available.
+- The SQLite database (`*.db`) is git-ignored; CVs and offers are never stored.
+- External AI calls need an explicit confirmation in the UI and `consent_external: true`
+  in the API.
+- Tests use fictional texts and fake providers only. The demo data uses fictional
+  companies and `example.com` links.
+- CORS only allows the local frontend origin by default.
+
+## Future improvements
+
+Ideas, not planned work:
+
+- Database migrations with Alembic.
+- Reading CVs from PDF or Word files.
+- A status-change history, for real timelines of responses and interviews.
+- Authentication, if it ever becomes multi-user.
+- Docker Compose to start both services with one command.
+- Export to CSV.
+- Choose and add a license.
 
 ## Development workflow
 
-- `main` is the stable branch and only receives changes through pull requests.
-- Each feature is developed on its own `feat/...` branch.
-- Pull requests are merged only when CI passes.
+- `main` is the stable branch and only receives changes through reviewed pull requests
+  with green CI.
+- Each phase is developed on its own branch:
 
-## Security
-
-Secrets such as API keys are never committed. Local configuration lives in `backend/.env`,
-which is git-ignored; `.env.example` documents the available variables. The Anthropic key
-is only read by the backend (as a secret value that is not printed in logs or settings
-dumps) and never reaches the frontend. Tests use fake providers and fictional texts: they
-never call a real API.
+| Phase | Pull request |
+| --- | --- |
+| 0. Project skeleton, health endpoint and CI | [#1](https://github.com/vaazquezz/jobtrack-ai/pull/1) |
+| 1. Applications REST API (CRUD) | [#2](https://github.com/vaazquezz/jobtrack-ai/pull/2) |
+| 2. Applications UI (list and form) | [#3](https://github.com/vaazquezz/jobtrack-ai/pull/3) |
+| 3. Search and filters | [#4](https://github.com/vaazquezz/jobtrack-ai/pull/4) |
+| 4. Follow-up reminders | [#5](https://github.com/vaazquezz/jobtrack-ai/pull/5) |
+| 5. Kanban board | [#6](https://github.com/vaazquezz/jobtrack-ai/pull/6) |
+| 6. Statistics dashboard | [#7](https://github.com/vaazquezz/jobtrack-ai/pull/7) |
+| 7. Job offer analysis (basic and AI) | [#8](https://github.com/vaazquezz/jobtrack-ai/pull/8) |
+| 8. Portfolio polish: docs, screenshots, demo data | this branch |
