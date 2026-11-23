@@ -1,14 +1,26 @@
 """FastAPI entry point for the JobTrack AI backend."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import get_settings
+from app.database import create_db_and_tables
+from app.routers import applications
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name, version=__version__)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    create_db_and_tables()
+    yield
+
+
+app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +29,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(applications.router)
 
 
 @app.get("/api/health", tags=["health"])
