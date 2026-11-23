@@ -16,7 +16,7 @@ export function ApplicationList({ applications, onEdit, onDelete }: ApplicationL
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div
-        className="application-row hidden border-b border-slate-200 bg-slate-50 px-6 py-3 text-xs font-medium uppercase tracking-wide text-slate-500 md:grid"
+        className="application-row hidden gap-x-4 border-b border-slate-200 bg-slate-50 px-6 py-3 text-xs font-medium uppercase tracking-wide text-slate-500 md:grid"
         aria-hidden="true"
       >
         <span className="[grid-area:company]">Empresa</span>
