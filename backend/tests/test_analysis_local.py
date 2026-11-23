@@ -81,6 +81,7 @@ def test_recommendations_never_suggest_inventing_experience():
     assert any("Si tienes experiencia real con AWS" in text for text in cv_recs)
     assert all("no la incluyas" in t for t in cv_recs if t.startswith("Si tienes experiencia real"))
     assert any(r.kind == "interview" and "Python" in r.text for r in recs)
+    assert any("«Experiencia mínima de 3 años», solo si es cierto" in t for t in cv_recs)
 
 
 def test_offer_without_known_terms_has_no_score():

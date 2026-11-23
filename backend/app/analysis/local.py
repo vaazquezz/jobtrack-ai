@@ -217,8 +217,8 @@ class KeywordAnalyzer:
             recs.append(
                 Recommendation(
                     kind="cv",
-                    text=f"Aclara en el CV tu nivel en «{item.requirement}» si realmente lo "
-                    "tienes; ahora mismo no queda claro.",
+                    text=f"Deja claro en el CV lo relativo a «{item.requirement}», solo si es "
+                    "cierto en tu caso: ahora mismo no se puede comprobar.",
                 )
             )
         for item in met[:3]:
