@@ -10,6 +10,7 @@ import {
   type Announcements,
   type DragEndEvent,
   type DragStartEvent,
+  type KeyboardCoordinateGetter,
 } from '@dnd-kit/core'
 import { useMemo, useState } from 'react'
 import { todayIso } from '../lib/format'
@@ -87,6 +88,28 @@ function KanbanColumn({ status, applications, today, pending, onMove, onEdit }: 
   )
 }
 
+/**
+ * Keyboard dragging: left/right arrows jump to the previous/next column instead of
+ * moving the card a few pixels (dnd-kit's default).
+ */
+const columnKeyboardCoordinates: KeyboardCoordinateGetter = (
+  event,
+  { context: { active, droppableRects, over, collisionRect } },
+) => {
+  const step = event.code === 'ArrowRight' ? 1 : event.code === 'ArrowLeft' ? -1 : 0
+  if (step === 0 || !collisionRect) return undefined
+  event.preventDefault()
+  const from = isStatus(over?.id) ? over.id : (active?.data.current?.status as ApplicationStatus)
+  const index = APPLICATION_STATUSES.indexOf(from) + step
+  const next = APPLICATION_STATUSES[Math.max(0, Math.min(APPLICATION_STATUSES.length - 1, index))]
+  const rect = droppableRects.get(next)
+  if (!rect) return undefined
+  return {
+    x: rect.left + rect.width / 2 - collisionRect.width / 2,
+    y: rect.top + 48,
+  }
+}
+
 export function KanbanBoard({ applications, pending, onMove, onEdit }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<number | null>(null)
   const today = todayIso()
@@ -99,7 +122,7 @@ export function KanbanBoard({ applications, pending, onMove, onEdit }: KanbanBoa
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     // On touch screens a short press starts the drag, so the board can still scroll.
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-    useSensor(KeyboardSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: columnKeyboardCoordinates }),
   )
 
   const name = (id: string | number) => {
@@ -136,13 +159,14 @@ export function KanbanBoard({ applications, pending, onMove, onEdit }: KanbanBoa
         announcements,
         screenReaderInstructions: {
           draggable:
-            'Pulsa espacio o intro para coger la tarjeta, usa las flechas para moverla entre columnas y vuelve a pulsar espacio o intro para soltarla. Escape cancela. También puedes usar el selector «Mover a» de cada tarjeta.',
+            'Pulsa espacio o intro para coger la tarjeta, usa las flechas izquierda y derecha para moverla entre columnas y vuelve a pulsar espacio o intro para soltarla. Escape cancela. También puedes usar el selector «Mover a» de cada tarjeta.',
         },
       }}
     >
-      {/* Only the board scrolls horizontally on narrow screens, never the page. */}
+      {/* Only the board scrolls horizontally on narrow screens, never the page.
+          `relative` keeps absolutely positioned children (e.g. sr-only text) inside it. */}
       <div
-        className="-mx-4 snap-x snap-mandatory overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0 xl:snap-none"
+        className="relative -mx-4 snap-x snap-mandatory overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0 xl:snap-none"
         role="region"
         aria-label="Tablero Kanban"
       >
@@ -163,7 +187,7 @@ export function KanbanBoard({ applications, pending, onMove, onEdit }: KanbanBoa
 
       <DragOverlay dropAnimation={{ duration: 180, easing: 'ease-out' }}>
         {active && (
-          <div className="w-[16rem] rotate-2 cursor-grabbing rounded-xl border border-slate-200 bg-white p-3.5 shadow-xl ring-1 ring-indigo-200">
+          <div className="w-full rotate-2 cursor-grabbing rounded-xl border border-slate-200 bg-white p-3.5 shadow-xl ring-1 ring-indigo-200">
             <KanbanCardContent application={active} today={today} />
           </div>
         )}

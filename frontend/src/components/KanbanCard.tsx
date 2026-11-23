@@ -43,7 +43,7 @@ export function KanbanCardContent({
       <div className="flex items-start gap-1.5">
         {handle}
         <h3
-          className="min-w-0 flex-1 truncate font-semibold text-slate-900"
+          className="line-clamp-2 min-w-0 flex-1 font-semibold break-words text-slate-900"
           title={application.company}
         >
           {application.company}
@@ -98,7 +98,7 @@ export function KanbanCardContent({
           >
             {APPLICATION_STATUSES.map((status) => (
               <option key={status} value={status}>
-                {status === application.status ? `${STATUS_LABELS[status]} (actual)` : `Mover a ${STATUS_LABELS[status]}`}
+                {status === application.status ? STATUS_LABELS[status] : `Mover a ${STATUS_LABELS[status]}`}
               </option>
             ))}
           </select>
@@ -119,6 +119,7 @@ interface KanbanCardProps {
 export function KanbanCard({ application, today, pending, onMove, onEdit }: KanbanCardProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
     id: application.id,
+    data: { status: application.status },
     disabled: pending,
   })
 
