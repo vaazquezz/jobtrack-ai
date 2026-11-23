@@ -1,53 +1,21 @@
 import { formatDate } from '../lib/format'
-import { formatRate, PERIOD_OPTIONS } from '../lib/stats'
-import type { StatsOverview, StatsPeriod } from '../types/application'
+import { formatRate } from '../lib/stats'
+import type { StatsOverview } from '../types/application'
 import { APPLICATION_STATUSES } from '../types/application'
 import { PipelineChart, StatusChart, WeeklyChart } from './StatsCharts'
 import { StatusBadge } from './StatusBadge'
 import { BriefcaseIcon } from './ui'
 
-interface PeriodSelectorProps {
-  period: StatsPeriod
-  onChange: (period: StatsPeriod) => void
-}
-
-export function PeriodSelector({ period, onChange }: PeriodSelectorProps) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Periodo"
-      className="inline-flex w-full rounded-xl bg-slate-200/60 p-1 sm:w-auto"
-    >
-      {PERIOD_OPTIONS.map((option) => {
-        const active = option.value === period
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(option.value)}
-            className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition sm:flex-none sm:text-sm ${
-              active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            {option.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 interface StatTileProps {
   label: string
   value: string
   detail: string
+  className?: string
 }
 
-function StatTile({ label, value, detail }: StatTileProps) {
+function StatTile({ label, value, detail, className = '' }: StatTileProps) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
       <dt className="text-sm text-slate-500">{label}</dt>
       <dd className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums sm:text-3xl">
         {value}
@@ -88,6 +56,7 @@ export default function StatsView({ stats }: { stats: StatsOverview }) {
       <dl className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
         <StatTile
           label="Candidaturas"
+          className="col-span-2 lg:col-span-1"
           value={String(stats.total)}
           detail={`${plural(stats.submitted, 'enviada', 'enviadas')} · ${stats.by_status.wishlist} por aplicar`}
         />
