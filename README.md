@@ -5,7 +5,7 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 3 — search and filters. The remaining features are planned and are
+> **Status:** phase 4 — follow-up reminders. The remaining features are planned and are
 > being built incrementally, one branch per phase.
 
 ## Tech stack
@@ -23,7 +23,7 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 - [x] **Phase 1** — Applications REST API (CRUD)
 - [x] **Phase 2** — Applications UI (list and form)
 - [x] **Phase 3** — Search and filters
-- [ ] **Phase 4** — Follow-up reminders
+- [x] **Phase 4** — Follow-up reminders
 - [ ] **Phase 5** — Kanban board
 - [ ] **Phase 6** — Statistics dashboard
 - [ ] **Phase 7** — AI job offer analysis and CV comparison
@@ -91,6 +91,13 @@ and the header badge shows whether the API is reachable.
   applied date defaults to today.
 - **Edit** — the pencil icon opens the same form pre-filled.
 - **Delete** — the bin icon asks for confirmation before anything is removed.
+- **Follow-ups** — the *Seguimientos* tab lists every application with a follow-up date,
+  grouped into *Vencidos* (overdue), *Para hoy* and *Próximos*, with relative dates
+  ("Hace 3 días", "Mañana"). Its counter shows how many are pending (overdue + today),
+  in red when any is overdue. From there you can mark a follow-up as done, change or
+  remove its date (with quick options: 3 days, 1 week, 2 weeks) or edit the application.
+  The list also flags overdue and due-today follow-ups. The search and status filters
+  apply to both tabs, and the selected tab is kept in the URL (`#seguimientos`).
 - **Search and filter** — type in the search box to find applications by company or
   position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
   *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
@@ -115,6 +122,8 @@ All endpoints are under `/api`. Request and response bodies are JSON.
 | `GET`    | `/api/applications/{id}`  | Get one application             | `200`   |
 | `PATCH`  | `/api/applications/{id}`  | Update the fields sent          | `200`   |
 | `DELETE` | `/api/applications/{id}`  | Delete an application           | `204`   |
+| `GET`    | `/api/follow-ups`         | Follow-ups grouped by date      | `200`   |
+| `POST`   | `/api/applications/{id}/follow-up/complete` | Mark a follow-up as done | `200` |
 
 ### Listing, search and filters
 
@@ -150,11 +159,47 @@ Responses also include the read-only fields `id`, `created_at` and `updated_at` 
 In `PATCH`, only the fields sent are changed; optional fields can be cleared with `null`,
 but `company`, `position` and `status` cannot be `null`.
 
+### Follow-ups
+
+`GET /api/follow-ups` returns the applications that have a `follow_up_date`, grouped
+relative to a reference day and sorted by date:
+
+```json
+{
+  "today": "2026-11-23",
+  "overdue": [/* follow_up_date < today */],
+  "due_today": [/* follow_up_date == today */],
+  "upcoming": [/* follow_up_date > today */],
+  "counts": { "overdue": 1, "today": 1, "upcoming": 2, "pending": 2 }
+}
+```
+
+It accepts `today` (`YYYY-MM-DD`, defaults to the server date; the UI sends the user's
+local date so "today" matches their time zone) and the same `q` and `status` filters as
+the list.
+
+**Marking a follow-up as done** — `POST /api/applications/{id}/follow-up/complete`
+with an optional body `{"completed_on": "2026-11-23", "next_follow_up_date": "2026-11-30"}`:
+
+- clears `follow_up_date`, so the follow-up is no longer pending (or sets it to
+  `next_follow_up_date` to schedule the next one in the same step);
+- appends `Seguimiento realizado el 23/11/2026.` to the notes, as a simple history
+  (skipped only if the notes are already at the 5000-character limit);
+- returns `409` if the application has no pending follow-up, and `422` if the next date
+  is before `applied_date`.
+
+This design needs no new database columns, so existing `jobtrack.db` files keep working
+without a migration. Changing or removing a follow-up date uses the normal `PATCH`.
+
+There are no emails, push notifications or background jobs: the counter and the
+*Seguimientos* tab are the reminders.
+
 ### Errors
 
 | Status | When                                                              |
 | ------ | ----------------------------------------------------------------- |
 | `404`  | The application id does not exist                                 |
+| `409`  | Marking a follow-up as done when the application has none         |
 | `422`  | Invalid body or query parameters (missing field, bad URL, unknown status, inconsistent dates, search text too long, …) |
 
 ### Example

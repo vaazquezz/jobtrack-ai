@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.config import get_settings
 from app.database import create_db_and_tables
-from app.routers import applications
+from app.routers import applications, follow_ups
 
 settings = get_settings()
 
@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(applications.router)
+app.include_router(follow_ups.router)
 
 
 @app.get("/api/health", tags=["health"])
