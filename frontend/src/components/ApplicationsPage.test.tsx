@@ -36,10 +36,19 @@ const json = (status: number, body?: unknown) =>
   })
 
 /** In-memory stand-in for the FastAPI endpoints, installed as global fetch. */
-function installFakeApi(initial: Application[] = [], options: { failList?: number } = {}) {
+interface FakeApiOptions {
+  failList?: number
+  /** Number of PATCH requests that fail with a 500 before they start succeeding. */
+  failPatches?: number
+  /** When set, PATCH responses wait until this promise resolves. */
+  patchGate?: Promise<void>
+}
+
+function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {}) {
   let items = [...initial]
   let nextId = Math.max(0, ...items.map((item) => item.id)) + 1
   let listFailures = options.failList ?? 0
+  let patchFailures = options.failPatches ?? 0
   const calls: Call[] = []
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -129,6 +138,11 @@ function installFakeApi(initial: Application[] = [], options: { failList?: numbe
       const existing = items.find((item) => item.id === id)
       if (!existing) return json(404, { detail: `Application ${id} not found` })
       if (method === 'PATCH') {
+        if (options.patchGate) await options.patchGate
+        if (patchFailures > 0) {
+          patchFailures -= 1
+          return json(500, { detail: 'Internal Server Error' })
+        }
         const updated = { ...existing, ...body }
         items = items.map((item) => (item.id === id ? updated : item))
         return json(200, updated)
@@ -720,5 +734,229 @@ describe('ApplicationsPage follow-ups', () => {
     expect(within(todayRow as HTMLElement).getByTitle('Fecha de seguimiento')).toHaveTextContent(
       'Hoy · 23 nov 2026',
     )
+  })
+})
+
+// --- Kanban -----------------------------------------------------------------------
+
+const BOARD_SAMPLE: Application[] = [
+  makeApplication({ id: 1, company: 'Example Corp', position: 'Backend Developer', status: 'applied', applied_date: '2026-11-01', follow_up_date: '2026-11-23' }),
+  makeApplication({ id: 2, company: 'Acme Software', position: 'Frontend Engineer', status: 'interview', applied_date: '2026-11-05', follow_up_date: null }),
+  makeApplication({ id: 3, company: 'Globex Labs', position: 'Data Analyst', status: 'applied', applied_date: null, follow_up_date: null }),
+  makeApplication({ id: 4, company: 'Initech', position: 'Platform Engineer', status: 'wishlist', applied_date: null, follow_up_date: null }),
+]
+
+const kanbanTab = () => screen.getByRole('tab', { name: /Kanban/ })
+const column = (title: string) => screen.getByRole('region', { name: new RegExp(`^${title}`) })
+const columnCompanies = (title: string) =>
+  within(column(title))
+    .queryAllByRole('listitem')
+    .map((item) => item.querySelector('h3')?.textContent)
+const columnCount = (title: string) =>
+  within(column(title)).getByLabelText(/candidaturas$/).textContent
+
+async function openKanban(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('list', { name: 'Candidaturas' })
+  await user.click(kanbanTab())
+  await screen.findByRole('region', { name: 'Tablero Kanban' })
+}
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+describe('ApplicationsPage Kanban', () => {
+  it('shows five status columns with counts and card details', async () => {
+    installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await openKanban(user)
+
+    expect(columnCompanies('Por aplicar')).toEqual(['Initech'])
+    expect(columnCompanies('Aplicada')).toEqual(['Example Corp', 'Globex Labs'])
+    expect(columnCompanies('Entrevista')).toEqual(['Acme Software'])
+    expect(columnCompanies('Oferta')).toEqual([])
+    expect(columnCompanies('Rechazada')).toEqual([])
+    expect(columnCount('Aplicada')).toBe('2')
+    expect(columnCount('Oferta')).toBe('0')
+    expect(within(column('Oferta')).getByText('Arrastra aquí una candidatura')).toBeInTheDocument()
+
+    const card = within(column('Aplicada')).getAllByRole('listitem')[0]
+    expect(within(card).getByText('Backend Developer')).toBeInTheDocument()
+    expect(card).toHaveTextContent('Fecha de solicitud: 1 nov 2026')
+    expect(card).toHaveTextContent('Seguimiento: 23 nov 2026')
+    expect(within(column('Aplicada')).getAllByRole('listitem')[1]).toHaveTextContent('Sin fecha')
+    expect(screen.getByText('4 candidaturas en el tablero')).toBeInTheDocument()
+    expect(window.location.hash).toBe('#kanban')
+  })
+
+  it('offers accessible controls on every card', async () => {
+    installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await openKanban(user)
+
+    const card = within(column('Entrevista')).getByRole('listitem')
+    const handle = within(card).getByRole('button', {
+      name: 'Arrastrar Frontend Engineer en Acme Software',
+    })
+    expect(handle).toHaveAttribute('aria-roledescription', 'tarjeta arrastrable')
+    // The card itself is not a role="button", so its select and buttons are not nested
+    // inside another interactive element.
+    expect(card).not.toHaveAttribute('role')
+    const select = within(card).getByLabelText('Mover Frontend Engineer en Acme Software a')
+    expect(select).toHaveValue('interview')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Mover a Por aplicar',
+      'Mover a Aplicada',
+      'Entrevista',
+      'Mover a Oferta',
+      'Mover a Rechazada',
+    ])
+    expect(within(card).getByRole('button', { name: 'Editar Frontend Engineer en Acme Software' })).toBeInTheDocument()
+  })
+
+  it('moves a card with the select: optimistic update, then saved with PATCH', async () => {
+    const gate = deferred()
+    const api = installFakeApi(BOARD_SAMPLE, { patchGate: gate.promise })
+    const user = renderPage()
+    await openKanban(user)
+
+    await user.selectOptions(screen.getByLabelText('Mover Data Analyst en Globex Labs a'), 'offer')
+
+    // The card moves at once and is marked busy while the request is pending.
+    expect(columnCompanies('Oferta')).toEqual(['Globex Labs'])
+    expect(columnCompanies('Aplicada')).toEqual(['Example Corp'])
+    expect(within(column('Oferta')).getByRole('listitem')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByLabelText('Mover Data Analyst en Globex Labs a')).toBeDisabled()
+
+    gate.resolve()
+
+    expect(await screen.findByText('Globex Labs movida a Oferta.')).toBeInTheDocument()
+    expect(api.calls.find((c) => c.method === 'PATCH')).toMatchObject({
+      url: '/api/applications/3',
+      body: { status: 'offer' },
+    })
+    expect(api.items().find((item) => item.id === 3)?.status).toBe('offer')
+    await waitFor(() => expect(columnCount('Oferta')).toBe('1'))
+    expect(within(column('Oferta')).getByRole('listitem')).not.toHaveAttribute('aria-busy')
+  })
+
+  it('puts the card back and offers a retry when saving fails', async () => {
+    const api = installFakeApi(BOARD_SAMPLE, { failPatches: 1 })
+    const user = renderPage()
+    await openKanban(user)
+
+    await user.selectOptions(screen.getByLabelText('Mover Backend Developer en Example Corp a'), 'interview')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('No se pudo mover Example Corp a Entrevista: Internal Server Error')
+    expect(alert).toHaveTextContent('La tarjeta ha vuelto a Aplicada.')
+    expect(columnCompanies('Aplicada')).toEqual(['Example Corp', 'Globex Labs'])
+    expect(columnCompanies('Entrevista')).toEqual(['Acme Software'])
+    expect(api.items().find((item) => item.id === 1)?.status).toBe('applied')
+
+    await user.click(within(alert).getByRole('button', { name: 'Reintentar' }))
+
+    expect(await screen.findByText('Example Corp movida a Entrevista.')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(columnCompanies('Entrevista')).toEqual(['Example Corp', 'Acme Software'])
+    expect(api.items().find((item) => item.id === 1)?.status).toBe('interview')
+  })
+
+  it('lets the user dismiss a failed move', async () => {
+    installFakeApi(BOARD_SAMPLE, { failPatches: 1 })
+    const user = renderPage()
+    await openKanban(user)
+
+    await user.selectOptions(screen.getByLabelText('Mover Platform Engineer en Initech a'), 'rejected')
+    await user.click(await screen.findByRole('button', { name: 'Cerrar aviso' }))
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(columnCompanies('Por aplicar')).toEqual(['Initech'])
+  })
+
+  it('keeps the list and the follow-ups in sync after a move', async () => {
+    installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await openKanban(user)
+
+    await user.selectOptions(screen.getByLabelText('Mover Backend Developer en Example Corp a'), 'offer')
+    await screen.findByText('Example Corp movida a Oferta.')
+
+    await user.click(screen.getByRole('tab', { name: /Candidaturas/ }))
+    const row = within(screen.getByRole('list', { name: 'Candidaturas' }))
+      .getAllByRole('listitem')
+      .find((r) => r.textContent?.includes('Example Corp')) as HTMLElement
+    await waitFor(() => expect(within(row).getByText('Oferta')).toBeInTheDocument())
+
+    await user.click(screen.getByRole('tab', { name: /Seguimientos/ }))
+    const today = await screen.findByRole('region', { name: /^Para hoy/ })
+    await waitFor(() => expect(within(today).getByText('Oferta')).toBeInTheDocument())
+  })
+
+  it('applies the search but not the status filter, so moved cards stay visible', async () => {
+    const api = installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    // A status filter chosen in the list...
+    await user.click(statusButton('Aplicada'))
+    await user.click(kanbanTab())
+    await screen.findByRole('region', { name: 'Tablero Kanban' })
+
+    // ...is not applied on the board, whose pills are hidden.
+    expect(screen.queryByRole('group', { name: 'Filtrar por estado' })).not.toBeInTheDocument()
+    expect(screen.getByText(/El tablero muestra todas las columnas de estado/)).toBeInTheDocument()
+    expect(columnCompanies('Entrevista')).toEqual(['Acme Software'])
+
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'engineer')
+    await waitFor(() => expect(columnCompanies('Aplicada')).toEqual([]))
+    expect(columnCompanies('Entrevista')).toEqual(['Acme Software'])
+    expect(columnCompanies('Por aplicar')).toEqual(['Initech'])
+    expect(api.listQueries()).toContain('q=engineer&limit=200')
+    expect(api.listQueries().some((q) => q.includes('q=engineer&status='))).toBe(true) // list only
+
+    // Moving a card keeps it on the board even though the list filter is "Aplicada".
+    await user.selectOptions(screen.getByLabelText('Mover Frontend Engineer en Acme Software a'), 'offer')
+    await screen.findByText('Acme Software movida a Oferta.')
+    expect(columnCompanies('Oferta')).toEqual(['Acme Software'])
+
+    // Clearing in the Kanban only clears the search; the list keeps its status filter.
+    await user.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await waitFor(() => expect(columnCompanies('Aplicada')).toEqual(['Example Corp', 'Globex Labs']))
+    await user.click(screen.getByRole('tab', { name: /Candidaturas/ }))
+    expect(statusButton('Aplicada')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('does not request board data until the Kanban tab is opened', async () => {
+    const api = installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    const before = api.listQueries().length
+
+    await user.click(kanbanTab())
+    await screen.findByRole('region', { name: 'Tablero Kanban' })
+
+    expect(api.listQueries().length).toBe(before + 1)
+  })
+
+  it('opens the edit form from a card', async () => {
+    installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await openKanban(user)
+
+    await user.click(screen.getByRole('button', { name: 'Editar Platform Engineer en Initech' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Editar candidatura' })
+    expect(within(dialog).getByLabelText(/Empresa/)).toHaveValue('Initech')
+  })
+
+  it('opens directly on the board when the URL has #kanban', async () => {
+    window.history.replaceState(null, '', '/#kanban')
+    installFakeApi(BOARD_SAMPLE)
+    renderPage()
+
+    expect(await screen.findByRole('region', { name: 'Tablero Kanban' })).toBeInTheDocument()
+    expect(kanbanTab()).toHaveAttribute('aria-selected', 'true')
   })
 })

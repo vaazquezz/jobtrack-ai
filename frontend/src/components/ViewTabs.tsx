@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import type { FollowUpCounts } from '../types/application'
-import { BellIcon, ListIcon } from './ui'
+import { BellIcon, ColumnsIcon, ListIcon } from './ui'
 
-export type View = 'list' | 'follow-ups'
+export type View = 'list' | 'kanban' | 'follow-ups'
 
 interface ViewTabsProps {
   view: View
@@ -24,11 +24,11 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
         role="tab"
         aria-selected={active}
         onClick={() => onChange(value)}
-        className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
+        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:gap-2 sm:px-4 text-sm font-medium transition sm:flex-none ${
           active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
         }`}
       >
-        {icon}
+        <span className="hidden sm:inline">{icon}</span>
         {label}
         {badge}
       </button>
@@ -38,6 +38,7 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
   return (
     <div role="tablist" aria-label="Vista" className="flex gap-1 rounded-xl bg-slate-200/60 p-1 sm:inline-flex">
       {tab('list', 'Candidaturas', <ListIcon />)}
+      {tab('kanban', 'Kanban', <ColumnsIcon />)}
       {tab(
         'follow-ups',
         'Seguimientos',

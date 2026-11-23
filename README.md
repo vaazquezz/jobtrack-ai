@@ -5,14 +5,14 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 4 — follow-up reminders. The remaining features are planned and are
-> being built incrementally, one branch per phase.
+> **Status:** phase 5 — Kanban board. The remaining features are planned and are being
+> built incrementally, one branch per phase.
 
 ## Tech stack
 
 | Layer    | Technology                                              |
 | -------- | ------------------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS                |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, dnd-kit       |
 | Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings      |
 | Database | SQLite                                                  |
 | Quality  | pytest, ruff, Vitest, Testing Library, oxlint, GitHub Actions |
@@ -24,7 +24,7 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 - [x] **Phase 2** — Applications UI (list and form)
 - [x] **Phase 3** — Search and filters
 - [x] **Phase 4** — Follow-up reminders
-- [ ] **Phase 5** — Kanban board
+- [x] **Phase 5** — Kanban board
 - [ ] **Phase 6** — Statistics dashboard
 - [ ] **Phase 7** — AI job offer analysis and CV comparison
 
@@ -91,13 +91,24 @@ and the header badge shows whether the API is reachable.
   applied date defaults to today.
 - **Edit** — the pencil icon opens the same form pre-filled.
 - **Delete** — the bin icon asks for confirmation before anything is removed.
+- **Kanban** — the *Kanban* tab shows one column per status (*Por aplicar*, *Aplicada*,
+  *Entrevista*, *Oferta*, *Rechazada*) with its count. Cards show company, position,
+  applied date and follow-up date. Drag a card to another column to change its status;
+  it is saved automatically through the API. Without dragging, use the *Mover a* selector
+  on each card (handy on phones and with a keyboard or screen reader), or focus the
+  card's grip handle, press space, move with ←/→ and press space again. The move is shown
+  at once; if the server fails, the card goes back to its column and an alert offers
+  *Reintentar*. The search applies to the board, but the status filter does not (the
+  columns already split by status, and a filter would make moved cards vanish). On
+  narrow screens only the board scrolls sideways, one column at a time.
 - **Follow-ups** — the *Seguimientos* tab lists every application with a follow-up date,
   grouped into *Vencidos* (overdue), *Para hoy* and *Próximos*, with relative dates
   ("Hace 3 días", "Mañana"). Its counter shows how many are pending (overdue + today),
   in red when any is overdue. From there you can mark a follow-up as done, change or
   remove its date (with quick options: 3 days, 1 week, 2 weeks) or edit the application.
   The list also flags overdue and due-today follow-ups. The search and status filters
-  apply to both tabs, and the selected tab is kept in the URL (`#seguimientos`).
+  apply to the list and follow-ups tabs, and the selected tab is kept in the URL
+  (`#kanban`, `#seguimientos`).
 - **Search and filter** — type in the search box to find applications by company or
   position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
   *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
