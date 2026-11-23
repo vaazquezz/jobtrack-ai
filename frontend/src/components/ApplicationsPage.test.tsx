@@ -74,6 +74,56 @@ function installFakeApi(initial: Application[] = [], options: { failList?: numbe
       items = [created, ...items]
       return json(201, created)
     }
+    if (method === 'GET' && url.startsWith('/api/follow-ups?')) {
+      // Mirror GET /api/follow-ups: same filters, grouped around ?today=.
+      const params = new URL(url, 'http://localhost').searchParams
+      const today = params.get('today') as string
+      const q = params.get('q')?.trim().toLocaleLowerCase() ?? ''
+      const status = params.get('status')
+      const withDate = items
+        .filter(
+          (item) =>
+            item.follow_up_date &&
+            (!q ||
+              item.company.toLocaleLowerCase().includes(q) ||
+              item.position.toLocaleLowerCase().includes(q)) &&
+            (!status || item.status === status),
+        )
+        .sort((a, b) => (a.follow_up_date as string).localeCompare(b.follow_up_date as string))
+      const overdue = withDate.filter((item) => (item.follow_up_date as string) < today)
+      const dueToday = withDate.filter((item) => item.follow_up_date === today)
+      const upcoming = withDate.filter((item) => (item.follow_up_date as string) > today)
+      return json(200, {
+        today,
+        overdue,
+        due_today: dueToday,
+        upcoming,
+        counts: {
+          overdue: overdue.length,
+          today: dueToday.length,
+          upcoming: upcoming.length,
+          pending: overdue.length + dueToday.length,
+        },
+      })
+    }
+    const complete = url.match(/^\/api\/applications\/(\d+)\/follow-up\/complete$/)
+    if (method === 'POST' && complete) {
+      const id = Number(complete[1])
+      const existing = items.find((item) => item.id === id)
+      if (!existing) return json(404, { detail: `Application ${id} not found` })
+      if (!existing.follow_up_date) {
+        return json(409, { detail: 'This application has no pending follow-up' })
+      }
+      const [y, m, d] = (body.completed_on as string).split('-')
+      const note = `Seguimiento realizado el ${d}/${m}/${y}.`
+      const updated = {
+        ...existing,
+        follow_up_date: body.next_follow_up_date ?? null,
+        notes: existing.notes ? `${existing.notes}\n${note}` : note,
+      }
+      items = items.map((item) => (item.id === id ? updated : item))
+      return json(200, updated)
+    }
     if (match) {
       const id = Number(match[1])
       const existing = items.find((item) => item.id === id)
@@ -120,6 +170,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  // The selected view lives in the URL hash; reset it so tests stay independent.
+  window.history.replaceState(null, '', '/')
 })
 
 describe('ApplicationsPage', () => {
@@ -446,5 +498,227 @@ describe('ApplicationsPage search and filters', () => {
 
     // Acme no longer has the "interview" status, so it leaves the filtered list.
     expect(await screen.findByText('No hay candidaturas que coincidan')).toBeInTheDocument()
+  })
+})
+
+// --- Follow-ups -------------------------------------------------------------------
+// "Today" is frozen at 2026-11-23 (see beforeEach above).
+
+const FOLLOW_UP_SAMPLE: Application[] = [
+  makeApplication({ id: 1, company: 'Example Corp', position: 'Backend Developer', status: 'applied', applied_date: '2026-11-01', follow_up_date: '2026-11-18' }),
+  makeApplication({ id: 2, company: 'Acme Software', position: 'Frontend Engineer', status: 'interview', applied_date: '2026-11-05', follow_up_date: '2026-11-23' }),
+  makeApplication({ id: 3, company: 'Globex Labs', position: 'Data Analyst', status: 'applied', applied_date: '2026-11-10', follow_up_date: '2026-11-25' }),
+  makeApplication({ id: 4, company: 'Initech', position: 'Platform Engineer', status: 'offer', applied_date: '2026-11-12', follow_up_date: null }),
+]
+
+const followUpsTab = () => screen.getByRole('tab', { name: /Seguimientos/ })
+
+/** Companies listed under a follow-up group heading ("Vencidos", "Para hoy", "Próximos"). */
+const groupCompanies = (title: string) => {
+  const section = screen.getByRole('region', { name: new RegExp(`^${title}`) })
+  const list = within(section).queryByRole('list')
+  if (!list) return []
+  return within(list)
+    .getAllByRole('listitem')
+    .map((item) => item.querySelector('.font-semibold')?.textContent)
+}
+
+async function openFollowUps(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => expect(within(followUpsTab()).getByText('2')).toBeInTheDocument())
+  await user.click(followUpsTab())
+  await screen.findByRole('region', { name: /^Vencidos/ })
+}
+
+describe('ApplicationsPage follow-ups', () => {
+  it('shows a pending counter (overdue + today) on the tab', async () => {
+    installFakeApi(FOLLOW_UP_SAMPLE)
+    renderPage()
+
+    await waitFor(() => expect(within(followUpsTab()).getByText('2')).toBeInTheDocument())
+    expect(within(followUpsTab()).getByLabelText('2 pendientes')).toHaveClass('bg-rose-600')
+  })
+
+  it('hides the counter when nothing is pending', async () => {
+    installFakeApi([makeApplication({ id: 1, follow_up_date: '2026-12-01' })])
+    renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await waitFor(() => expect(followUpsTab()).toHaveTextContent(/^Seguimientos$/))
+  })
+
+  it('groups follow-ups into overdue, today and upcoming with relative dates', async () => {
+    installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    expect(groupCompanies('Vencidos')).toEqual(['Example Corp'])
+    expect(groupCompanies('Para hoy')).toEqual(['Acme Software'])
+    expect(groupCompanies('Próximos')).toEqual(['Globex Labs'])
+    expect(screen.getByText('Hace 5 días')).toBeInTheDocument()
+    expect(screen.getByText('Hoy')).toBeInTheDocument()
+    expect(screen.getByText('En 2 días')).toBeInTheDocument()
+    expect(screen.getByText('1 vencido · 1 para hoy · 1 próximo')).toBeInTheDocument()
+    // Applications without a follow-up date are not listed.
+    const panel = screen.getByRole('tabpanel', { name: 'Seguimientos' })
+    expect(within(panel).queryByText('Initech')).not.toBeInTheDocument()
+    expect(window.location.hash).toBe('#seguimientos')
+  })
+
+  it('opens directly on the follow-ups view when the URL has #seguimientos', async () => {
+    window.history.replaceState(null, '', '/#seguimientos')
+    installFakeApi(FOLLOW_UP_SAMPLE)
+    renderPage()
+
+    expect(await screen.findByRole('region', { name: /^Vencidos/ })).toBeInTheDocument()
+    expect(followUpsTab()).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('marks a follow-up as done so it is no longer pending', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Marcar como hecho el seguimiento de Backend Developer en Example Corp',
+      }),
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Marcar seguimiento como hecho' })
+    await user.click(within(dialog).getByRole('button', { name: 'Marcar como hecho' }))
+
+    await waitFor(() => expect(groupCompanies('Vencidos')).toEqual([]))
+    const call = api.calls.find((c) => c.url.endsWith('/follow-up/complete'))
+    expect(call?.url).toBe('/api/applications/1/follow-up/complete')
+    expect(call?.body).toEqual({ completed_on: '2026-11-23', next_follow_up_date: null })
+    expect(api.items().find((item) => item.id === 1)?.notes).toBe(
+      'Seguimiento realizado el 23/11/2026.',
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Seguimiento marcado como hecho.')
+    await waitFor(() => expect(within(followUpsTab()).getByText('1')).toBeInTheDocument())
+  })
+
+  it('can schedule the next follow-up when marking one as done', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(
+      screen.getByRole('button', { name: /Marcar como hecho el seguimiento de Frontend Engineer/ }),
+    )
+    const dialog = screen.getByRole('dialog')
+    await user.click(within(dialog).getByLabelText('Programar el siguiente seguimiento'))
+    await user.click(within(dialog).getByRole('button', { name: 'En 1 semana' }))
+    expect(within(dialog).getByLabelText('Próximo seguimiento')).toHaveValue('2026-11-30')
+    await user.click(within(dialog).getByRole('button', { name: 'Marcar como hecho' }))
+
+    await waitFor(() => expect(groupCompanies('Próximos')).toEqual(['Globex Labs', 'Acme Software']))
+    expect(groupCompanies('Para hoy')).toEqual([])
+    expect(api.calls.find((c) => c.url.endsWith('/follow-up/complete'))?.body).toEqual({
+      completed_on: '2026-11-23',
+      next_follow_up_date: '2026-11-30',
+    })
+  })
+
+  it('changes the follow-up date from the follow-ups view', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Cambiar fecha de seguimiento de Backend Developer en Example Corp',
+      }),
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Fecha de seguimiento' })
+    expect(within(dialog).getByLabelText('Nueva fecha')).toHaveValue('2026-11-18')
+    await user.click(within(dialog).getByRole('button', { name: 'En 2 semanas' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar fecha' }))
+
+    await waitFor(() => expect(groupCompanies('Vencidos')).toEqual([]))
+    expect(groupCompanies('Próximos')).toEqual(['Globex Labs', 'Example Corp'])
+    const patch = api.calls.find((c) => c.method === 'PATCH')
+    expect(patch?.url).toBe('/api/applications/1')
+    expect(patch?.body).toEqual({ follow_up_date: '2026-12-07' })
+    expect(screen.getByRole('status')).toHaveTextContent('Fecha de seguimiento actualizada.')
+  })
+
+  it('removes the follow-up date', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(
+      screen.getByRole('button', { name: /Cambiar fecha de seguimiento de Frontend Engineer/ }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Quitar seguimiento' }))
+
+    await waitFor(() => expect(groupCompanies('Para hoy')).toEqual([]))
+    expect(api.calls.find((c) => c.method === 'PATCH')?.body).toEqual({ follow_up_date: null })
+    expect(screen.getByText('Nada programado para hoy.')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Seguimiento eliminado.')
+  })
+
+  it('does not allow a follow-up date before the applied date', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(
+      screen.getByRole('button', { name: /Cambiar fecha de seguimiento de Data Analyst/ }),
+    )
+    const dialog = screen.getByRole('dialog')
+    const input = within(dialog).getByLabelText('Nueva fecha')
+    await user.clear(input)
+    await user.type(input, '2026-11-01')
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar fecha' }))
+
+    expect(within(dialog).getByText(/No puede ser anterior a la fecha de solicitud/)).toBeInTheDocument()
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(api.calls.some((c) => c.method === 'PATCH')).toBe(false)
+  })
+
+  it('applies the search and status filters to the follow-ups', async () => {
+    const api = installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+
+    await user.click(statusButton('Entrevista'))
+    await waitFor(() => expect(groupCompanies('Para hoy')).toEqual(['Acme Software']))
+    expect(groupCompanies('Vencidos')).toEqual([])
+    expect(api.calls.some((c) => c.url.includes('/api/follow-ups?status=interview&today=2026-11-23'))).toBe(true)
+
+    await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'zzz')
+    expect(await screen.findByText('No hay seguimientos que coincidan')).toBeInTheDocument()
+  })
+
+  it('shows an empty state when there are no follow-ups at all', async () => {
+    installFakeApi([makeApplication({ id: 1, follow_up_date: null })])
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    await user.click(followUpsTab())
+
+    expect(await screen.findByText('No tienes seguimientos programados')).toBeInTheDocument()
+  })
+
+  it('keeps the list in sync after a follow-up action', async () => {
+    installFakeApi(FOLLOW_UP_SAMPLE)
+    const user = renderPage()
+    await openFollowUps(user)
+    await user.click(
+      screen.getByRole('button', { name: /Marcar como hecho el seguimiento de Backend Developer/ }),
+    )
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Marcar como hecho' }))
+    await waitFor(() => expect(groupCompanies('Vencidos')).toEqual([]))
+
+    await user.click(screen.getByRole('tab', { name: /Candidaturas/ }))
+
+    const list = screen.getByRole('list', { name: 'Candidaturas' })
+    const row = within(list).getAllByRole('listitem').find((r) => r.textContent?.includes('Example Corp'))
+    await waitFor(() => expect(within(row as HTMLElement).queryByTitle('Fecha de seguimiento')).toBeNull())
+    const todayRow = within(list).getAllByRole('listitem').find((r) => r.textContent?.includes('Acme Software'))
+    expect(within(todayRow as HTMLElement).getByTitle('Fecha de seguimiento')).toHaveTextContent(
+      'Hoy · 23 nov 2026',
+    )
   })
 })
