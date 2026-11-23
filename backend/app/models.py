@@ -119,3 +119,34 @@ class ApplicationRead(ApplicationBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+
+# --- Follow-ups -----------------------------------------------------------------
+
+
+class FollowUpCounts(SQLModel):
+    overdue: int
+    today: int
+    upcoming: int
+    pending: int  # overdue + today: what needs attention now
+
+
+class FollowUpOverview(SQLModel):
+    """Applications with a follow-up date, grouped relative to `today`."""
+
+    today: date
+    overdue: list[ApplicationRead]
+    due_today: list[ApplicationRead]
+    upcoming: list[ApplicationRead]
+    counts: FollowUpCounts
+
+
+class FollowUpComplete(SQLModel):
+    """Body for marking a follow-up as done.
+
+    `completed_on` defaults to the server's date; clients send their local date.
+    `next_follow_up_date` optionally schedules the next follow-up in the same step.
+    """
+
+    completed_on: date | None = None
+    next_follow_up_date: date | None = None
