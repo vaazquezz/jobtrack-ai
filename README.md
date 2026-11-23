@@ -291,21 +291,26 @@ sent; the backend also refuses `mode: "ai"` without `consent_external: true` (`4
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables AI mode. Empty = local analysis only. Read only by the backend, never sent to the frontend. |
-| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model to use. |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model ID (Claude Opus 5.5, listed in Anthropic's models overview). Any current Claude API model ID works, e.g. `claude-sonnet-5-5` or `claude-haiku-5-5`. |
 | `AI_TIMEOUT_SECONDS` | `60` | Time to wait for the provider before failing. |
-| `AI_MAX_RETRIES` | `2` | SDK retries on connection errors, 429 and 5xx. |
+| `AI_MAX_RETRIES` | `2` | SDK retries on transient failures only (connection errors, 408/409/429, 5xx). Safety refusals are never retried. |
 
 To enable AI mode, create an API key in the Anthropic Console, put it in `backend/.env`
 as `ANTHROPIC_API_KEY=...` and restart `uvicorn`. Never commit the key: `.env` is
 git-ignored. Each AI analysis is a paid API call billed to that key.
 
 **Limits and errors.** Each text must have 30–20,000 characters (`422` otherwise). AI
-mode without a key returns `409`. Provider failures return a Spanish message:
-timeout `504`, rate limit `429`, and invalid key, other API errors, connection errors,
-refusals, truncated responses or responses that do not match the schema `502`. Server-side
-refusal fallbacks are enabled, so a request declined by the model's safety classifiers
-is retried on a fallback model within the same call. The app does not fall back
-silently from AI to the local mode: the user decides.
+mode without a key returns `409`. Provider failures return a Spanish message: timeout
+`504`, rate limit `429`, and invalid key, other API errors, connection errors, truncated
+responses or responses that do not match the schema `502`.
+
+**Retries and safety refusals.** Only transient technical failures are retried, by the
+SDK itself (connection errors, 408/409/429 and 5xx; `AI_MAX_RETRIES` times). A safety
+refusal from the model (`stop_reason: "refusal"`) is **not** retried and is **never**
+sent to another model: the user sees a `422` explaining that the model declined, and can
+review the texts or use the basic analysis. The request uses the standard Messages
+endpoint with the single configured model and no server-side fallbacks. The app does not
+fall back silently from AI to the local mode either: the user decides.
 
 ### Errors
 
