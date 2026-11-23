@@ -1023,6 +1023,24 @@ describe('ApplicationsPage Kanban', () => {
     expect(within(dialog).getByLabelText(/Empresa/)).toHaveValue('Initech')
   })
 
+  it('titles the page after the active tab', async () => {
+    installFakeApi(BOARD_SAMPLE)
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    const title = () => screen.getByRole('heading', { level: 1 })
+    expect(title()).toHaveTextContent('Candidaturas')
+
+    for (const [tab, heading] of [
+      [/Kanban/, 'Tablero Kanban'],
+      [/Seguimientos/, 'Seguimientos'],
+      [/Estadísticas/, 'Estadísticas'],
+      [/Análisis IA/, 'Análisis de ofertas'],
+    ] as const) {
+      await user.click(screen.getByRole('tab', { name: tab }))
+      expect(title()).toHaveTextContent(heading)
+    }
+  })
+
   it('opens directly on the board when the URL has #kanban', async () => {
     window.history.replaceState(null, '', '/#kanban')
     installFakeApi(BOARD_SAMPLE)
