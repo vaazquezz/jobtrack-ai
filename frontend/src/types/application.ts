@@ -84,3 +84,39 @@ export interface StatsOverview {
   weekly: { week_start: string; count: number }[]
   undated_submitted: number
 }
+
+// --- CV / job offer analysis ------------------------------------------------------------
+
+export type AnalysisMode = 'local' | 'ai'
+export type SkillStatus = 'demonstrated' | 'missing' | 'ambiguous'
+
+export interface AnalysisConfig {
+  ai_available: boolean
+  provider: string | null
+  model: string | null
+  min_chars: number
+  max_chars: number
+}
+
+export interface AnalysisRequest {
+  cv_text: string
+  job_text: string
+  mode: AnalysisMode
+  consent_external: boolean
+}
+
+/** Response of POST /api/analysis. */
+export interface AnalysisResult {
+  mode: AnalysisMode
+  provider: string
+  model: string | null
+  summary: string
+  met: { requirement: string; evidence: string }[]
+  missing: { requirement: string; note: string }[]
+  ambiguous: { requirement: string; evidence: string | null; note: string }[]
+  skills: { name: string; status: SkillStatus }[]
+  recommendations: { kind: 'cv' | 'interview'; text: string }[]
+  score: number | null
+  score_explanation: string
+  notices: string[]
+}
