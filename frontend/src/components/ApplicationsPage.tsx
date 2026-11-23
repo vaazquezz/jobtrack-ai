@@ -40,6 +40,15 @@ const VIEW_HASHES: Record<Exclude<View, 'list'>, string> = {
   analysis: '#analisis',
 }
 
+/** Page heading for each tab, so the title matches what is on screen. */
+const VIEW_TITLES: Record<View, string> = {
+  list: 'Candidaturas',
+  kanban: 'Tablero Kanban',
+  'follow-ups': 'Seguimientos',
+  stats: 'Estadísticas',
+  analysis: 'Análisis de ofertas',
+}
+
 // The dashboard (and Recharts) is only downloaded when the statistics tab is opened.
 const StatsView = lazy(() => import('./StatsView'))
 
@@ -214,7 +223,7 @@ export function ApplicationsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-            Candidaturas
+            {VIEW_TITLES[view]}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {subtitle()}
