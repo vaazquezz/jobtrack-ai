@@ -5,14 +5,14 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 5 — Kanban board. The remaining features are planned and are being
-> built incrementally, one branch per phase.
+> **Status:** phase 6 — statistics dashboard. The remaining features are planned and are
+> being built incrementally, one branch per phase.
 
 ## Tech stack
 
 | Layer    | Technology                                              |
 | -------- | ------------------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, dnd-kit       |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, dnd-kit, Recharts |
 | Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings      |
 | Database | SQLite                                                  |
 | Quality  | pytest, ruff, Vitest, Testing Library, oxlint, GitHub Actions |
@@ -25,7 +25,7 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 - [x] **Phase 3** — Search and filters
 - [x] **Phase 4** — Follow-up reminders
 - [x] **Phase 5** — Kanban board
-- [ ] **Phase 6** — Statistics dashboard
+- [x] **Phase 6** — Statistics dashboard
 - [ ] **Phase 7** — AI job offer analysis and CV comparison
 
 ## Project structure
@@ -108,7 +108,12 @@ and the header badge shows whether the API is reachable.
   remove its date (with quick options: 3 days, 1 week, 2 weeks) or edit the application.
   The list also flags overdue and due-today follow-ups. The search and status filters
   apply to the list and follow-ups tabs, and the selected tab is kept in the URL
-  (`#kanban`, `#seguimientos`).
+  (`#kanban`, `#seguimientos`, `#estadisticas`).
+- **Statistics** — the *Estadísticas* tab shows KPIs, counts per status and three charts
+  (weekly activity, distribution by status, interviews and offers) for the last 30 days,
+  the last 90 days or the whole history. Each chart has a hover tooltip and a *Ver datos*
+  table. The numbers reload after any change made in the other tabs. Search and status
+  filters do not apply here. See [Statistics](#statistics) for the definitions.
 - **Search and filter** — type in the search box to find applications by company or
   position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
   *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
@@ -135,6 +140,7 @@ All endpoints are under `/api`. Request and response bodies are JSON.
 | `DELETE` | `/api/applications/{id}`  | Delete an application           | `204`   |
 | `GET`    | `/api/follow-ups`         | Follow-ups grouped by date      | `200`   |
 | `POST`   | `/api/applications/{id}/follow-up/complete` | Mark a follow-up as done | `200` |
+| `GET`    | `/api/stats`              | Statistics for a period         | `200`   |
 
 ### Listing, search and filters
 
@@ -204,6 +210,42 @@ without a migration. Changing or removing a follow-up date uses the normal `PATC
 
 There are no emails, push notifications or background jobs: the counter and the
 *Seguimientos* tab are the reminders.
+
+### Statistics
+
+`GET /api/stats?period=30d|90d|all&today=YYYY-MM-DD` (defaults: `all` and the server
+date; the UI sends the user's local date) returns totals, counts per status, rates and
+submitted applications per week. Everything is computed from what is stored in SQLite.
+
+| Metric | Definition |
+| --- | --- |
+| Period | An application is included when its **applied date**, or its creation date if it has none, is between the period start and `today` (inclusive). 30 days = today and the 29 days before. Future dates are excluded. |
+| Candidaturas (`total`) | Applications in the period, every status. |
+| Enviadas (`submitted`) | Applications in any status except *Por aplicar* (`wishlist`). |
+| Con respuesta (`responded`) | Submitted applications currently in *Entrevista*, *Oferta* or *Rechazada*. |
+| Entrevistas (`interviews`) | Submitted applications currently in *Entrevista* or *Oferta*. |
+| Ofertas (`offers`) | Applications currently in *Oferta*. |
+| Tasa de respuesta | `responded / submitted` |
+| Tasa de entrevistas | `interviews / submitted` |
+| Tasa de ofertas | `offers / submitted` |
+| Evolución semanal (`weekly`) | Submitted applications per week (Monday to Sunday) by **applied date**, including weeks with none. The first and last weeks of a 30/90-day period may be partial. |
+
+Edge cases: with no submitted applications the rates are `null` (shown as "—"), not a
+division by zero. Submitted applications without an applied date are left out of the
+weekly chart and counted in `undated_submitted` instead of being given a date. A period
+without applications returns zeros and the UI shows an empty state.
+
+**Limitations.** Only the *current* status of each application is stored, not a history
+of status changes or the dates of responses, interviews or offers. The metrics therefore
+describe where applications are today:
+
+- An application rejected after an interview counts as a response but not as an
+  interview, so the interview rate is a lower bound.
+- Applications marked *Rechazada* without the company replying still count as responses.
+- Interviews and offers cannot be placed on a timeline; only submissions (applied date)
+  can, which is why the weekly chart shows submissions only.
+- Creation dates are stored in UTC, so an application without an applied date created
+  late in the evening may fall on the next day.
 
 ### Errors
 
