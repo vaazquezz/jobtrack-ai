@@ -1173,6 +1173,22 @@ describe('ApplicationsPage statistics', () => {
     expect(api.statsQueries().length).toBeGreaterThanOrEqual(2)
   })
 
+  it('updates while visible when an application is created from the stats tab', async () => {
+    installFakeApi(STATS_SAMPLE)
+    const user = renderPage()
+    await openStats(user)
+    expect(within(tile('Candidaturas')).getByText('6')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Nueva candidatura' }))
+    const dialog = screen.getByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/Empresa/), 'Hooli')
+    await user.type(within(dialog).getByLabelText(/Puesto/), 'SRE')
+    await user.click(within(dialog).getByRole('button', { name: 'Añadir candidatura' }))
+
+    await waitFor(() => expect(within(tile('Candidaturas')).getByText('7')).toBeInTheDocument())
+    expect(statsTab()).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('does not request statistics until the tab is opened', async () => {
     const api = installFakeApi(STATS_SAMPLE)
     renderPage()
