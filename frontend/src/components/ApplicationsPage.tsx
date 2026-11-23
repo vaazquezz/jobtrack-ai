@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { LIST_LIMIT, updateApplication } from '../api/applications'
 import { completeFollowUp } from '../api/followUps'
 import { useApplications } from '../hooks/useApplications'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useBoard } from '../hooks/useBoard'
 import { useFollowUps } from '../hooks/useFollowUps'
+import { useStats } from '../hooks/useStats'
 import { formatDate, todayIso } from '../lib/format'
 import { emptyFormValues, formValuesFromApplication } from '../lib/validation'
-import type { Application, ApplicationPayload, ApplicationStatus } from '../types/application'
+import type {
+  Application,
+  ApplicationPayload,
+  ApplicationStatus,
+  StatsPeriod,
+} from '../types/application'
 import { STATUS_LABELS } from '../types/application'
 import { ApplicationForm } from './ApplicationForm'
 import { ApplicationList } from './ApplicationList'
@@ -17,6 +23,7 @@ import { ChangeFollowUpDateDialog, CompleteFollowUpDialog } from './FollowUpDial
 import { FollowUpsView } from './FollowUpsView'
 import { KanbanBoard } from './KanbanBoard'
 import { Modal } from './Modal'
+import { PeriodSelector } from './PeriodSelector'
 import { EmptyState, ErrorState, LoadingState, NoResultsState } from './states'
 import { AlertIcon, Button, CloseIcon, PlusIcon } from './ui'
 import { ViewTabs, type View } from './ViewTabs'
@@ -28,7 +35,11 @@ type FollowUpAction = { kind: 'complete' | 'date'; application: Application } | 
 const VIEW_HASHES: Record<Exclude<View, 'list'>, string> = {
   kanban: '#kanban',
   'follow-ups': '#seguimientos',
+  stats: '#estadisticas',
 }
+
+// The dashboard (and Recharts) is only downloaded when the statistics tab is opened.
+const StatsView = lazy(() => import('./StatsView'))
 
 /** The selected view is kept in the URL hash so a reload keeps it. */
 function initialView(): View {
@@ -70,6 +81,10 @@ export function ApplicationsPage() {
   // The board applies the search only (its columns already split by status) and only
   // fetches while its tab is visible.
   const board = useBoard(activeQuery, version, bump, view === 'kanban')
+  const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>('all')
+  // Statistics cover every application in the period: search and status filters do
+  // not apply. They reload after any change made in the other tabs.
+  const stats = useStats(statsPeriod, version, view === 'stats')
   const [followUpAction, setFollowUpAction] = useState<FollowUpAction>(null)
   const [editor, setEditor] = useState<Editor>(null)
   const [toDelete, setToDelete] = useState<Application | null>(null)
@@ -180,6 +195,7 @@ export function ApplicationsPage() {
   }
 
   const subtitle = () => {
+    if (view === 'stats') return 'Estadísticas de tu búsqueda de empleo.'
     if (view === 'follow-ups' && followUpCounts) return followUpSummary(followUpCounts)
     if (view === 'kanban' && board.loadState.status === 'ready') {
       return searching
@@ -212,14 +228,37 @@ export function ApplicationsPage() {
       {!noApplicationsAtAll && (
         <div className="mt-6 space-y-4">
           <ViewTabs view={view} onChange={changeView} followUps={followUpCounts} />
-          <FilterBar
-            query={query}
-            status={status}
-            onQueryChange={setQuery}
-            onStatusChange={setStatus}
-            onClear={view === 'kanban' ? () => setQuery('') : clearFilters}
-            showStatus={view !== 'kanban'}
-          />
+          {view === 'stats' ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <PeriodSelector period={statsPeriod} onChange={setStatsPeriod} />
+              <p className="text-xs text-slate-500">
+                Incluye todas las candidaturas del periodo; la búsqueda y los filtros no se aplican.
+              </p>
+            </div>
+          ) : (
+            <FilterBar
+              query={query}
+              status={status}
+              onQueryChange={setQuery}
+              onStatusChange={setStatus}
+              onClear={view === 'kanban' ? () => setQuery('') : clearFilters}
+              showStatus={view !== 'kanban'}
+            />
+          )}
+        </div>
+      )}
+
+      {view === 'stats' && !noApplicationsAtAll && (
+        <div className="mt-6" role="tabpanel" aria-label="Estadísticas">
+          {stats.state.status === 'loading' && <LoadingState />}
+          {stats.state.status === 'error' && (
+            <ErrorState message={stats.state.message} onRetry={stats.retry} />
+          )}
+          {stats.state.status === 'ready' && (
+            <Suspense fallback={<LoadingState />}>
+              <StatsView stats={stats.state.data} />
+            </Suspense>
+          )}
         </div>
       )}
 

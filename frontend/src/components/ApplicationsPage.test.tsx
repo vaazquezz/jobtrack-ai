@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { addDays } from '../lib/followUps'
 import { todayIso } from '../lib/format'
 import type { Application } from '../types/application'
 import { ApplicationsPage } from './ApplicationsPage'
@@ -42,6 +43,9 @@ interface FakeApiOptions {
   failPatches?: number
   /** When set, PATCH responses wait until this promise resolves. */
   patchGate?: Promise<void>
+  /** Weekly series returned by the fake /api/stats (it does not compute weeks). */
+  statsWeekly?: { week_start: string; count: number }[]
+  failStats?: number
 }
 
 function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {}) {
@@ -49,6 +53,7 @@ function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {
   let nextId = Math.max(0, ...items.map((item) => item.id)) + 1
   let listFailures = options.failList ?? 0
   let patchFailures = options.failPatches ?? 0
+  let statsFailures = options.failStats ?? 0
   const calls: Call[] = []
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -115,6 +120,47 @@ function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {
         },
       })
     }
+    if (method === 'GET' && url.startsWith('/api/stats?')) {
+      if (statsFailures > 0) {
+        statsFailures -= 1
+        return json(500, { detail: 'Internal Server Error' })
+      }
+      // Same definitions as the backend; the period uses applied date or creation date.
+      const params = new URL(url, 'http://localhost').searchParams
+      const today = params.get('today') as string
+      const period = params.get('period') as 'all' | '30d' | '90d'
+      const days = period === 'all' ? null : Number(period.replace('d', ''))
+      const start = days === null ? null : addDays(today, -(days - 1))
+      const inPeriod = items.filter((item) => {
+        const ref = item.applied_date ?? item.created_at.slice(0, 10)
+        return ref <= today && (start === null || ref >= start)
+      })
+      const count = (statuses: string[]) =>
+        inPeriod.filter((item) => statuses.includes(item.status)).length
+      const submitted = inPeriod.length - count(['wishlist'])
+      const responded = count(['interview', 'offer', 'rejected'])
+      const interviews = count(['interview', 'offer'])
+      const offers = count(['offer'])
+      const rate = (n: number) => (submitted ? Math.round((n / submitted) * 10000) / 10000 : null)
+      return json(200, {
+        period,
+        today,
+        start,
+        total: inPeriod.length,
+        by_status: Object.fromEntries(
+          ['wishlist', 'applied', 'interview', 'offer', 'rejected'].map((st) => [st, count([st])]),
+        ),
+        submitted,
+        responded,
+        interviews,
+        offers,
+        response_rate: rate(responded),
+        interview_rate: rate(interviews),
+        offer_rate: rate(offers),
+        weekly: options.statsWeekly ?? [],
+        undated_submitted: inPeriod.filter((i) => i.status !== 'wishlist' && !i.applied_date).length,
+      })
+    }
     const complete = url.match(/^\/api\/applications\/(\d+)\/follow-up\/complete$/)
     if (method === 'POST' && complete) {
       const id = Number(complete[1])
@@ -162,7 +208,10 @@ function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {
       .filter((call) => call.method === 'GET' && call.url.startsWith('/api/applications?'))
       .map((call) => call.url.split('?')[1])
 
-  return { calls, listQueries, items: () => items, fetchMock }
+  const statsQueries = () =>
+    calls.filter((call) => call.url.startsWith('/api/stats?')).map((call) => call.url.split('?')[1])
+
+  return { calls, listQueries, statsQueries, items: () => items, fetchMock }
 }
 
 function renderPage() {
@@ -958,5 +1007,206 @@ describe('ApplicationsPage Kanban', () => {
 
     expect(await screen.findByRole('region', { name: 'Tablero Kanban' })).toBeInTheDocument()
     expect(kanbanTab()).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+// --- Statistics ---------------------------------------------------------------------
+// "Today" is frozen at 2026-11-23 (a Monday).
+
+const STATS_SAMPLE: Application[] = [
+  { id: 1, company: 'Example Corp', status: 'applied', applied_date: '2026-11-20' },
+  { id: 2, company: 'Acme Software', status: 'interview', applied_date: '2026-11-10' },
+  { id: 3, company: 'Globex Labs', status: 'offer', applied_date: '2026-09-15' },
+  { id: 4, company: 'Initech', status: 'rejected', applied_date: '2026-11-02' },
+  { id: 5, company: 'Umbrella', status: 'wishlist', applied_date: null, created_at: '2026-11-21T09:00:00Z' },
+  { id: 6, company: 'Old Co', status: 'rejected', applied_date: '2025-03-01' },
+].map((fields) =>
+  makeApplication({ follow_up_date: null, ...(fields as Partial<Application>) }),
+)
+
+const statsTab = () => screen.getByRole('tab', { name: /Estadísticas/ })
+const tile = (label: string) =>
+  screen.getByText(label, { selector: 'dt' }).parentElement as HTMLElement
+
+async function openStats(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('list', { name: 'Candidaturas' })
+  await user.click(statsTab())
+  return screen.findByRole('region', { name: 'Evolución semanal' })
+}
+
+/** Rows of the "Ver datos" table inside a chart card, as [label, value] pairs. */
+const tableRows = (chart: string) =>
+  within(within(screen.getByRole('region', { name: chart })).getByRole('table'))
+    .getAllByRole('row')
+    .slice(1)
+    .map((row) => [row.querySelector('th')?.textContent, row.querySelector('td')?.textContent])
+
+describe('ApplicationsPage statistics', () => {
+  it('shows KPIs computed by the API for the whole history', async () => {
+    const api = installFakeApi(STATS_SAMPLE)
+    const user = renderPage()
+    await openStats(user)
+
+    expect(api.statsQueries()).toEqual(['period=all&today=2026-11-23'])
+    expect(window.location.hash).toBe('#estadisticas')
+    expect(within(tile('Candidaturas')).getByText('6')).toBeInTheDocument()
+    expect(tile('Candidaturas')).toHaveTextContent('5 enviadas · 1 por aplicar')
+    expect(within(tile('Entrevistas')).getByText('2')).toBeInTheDocument()
+    expect(tile('Entrevistas')).toHaveTextContent('1 en entrevista ahora')
+    expect(within(tile('Ofertas')).getByText('1')).toBeInTheDocument()
+    // responded = interview + offer + 2 rejected = 4 of 5 submitted
+    expect(tile('Tasa de respuesta')).toHaveTextContent(/80\s%/)
+    expect(tile('Tasa de respuesta')).toHaveTextContent('4 de 5 enviadas')
+    expect(tile('Tasa de entrevistas')).toHaveTextContent(/40\s%/)
+    expect(screen.getByText('Todo el historial hasta el 23 nov 2026.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Cómo se calculan' })).toBeInTheDocument()
+    expect(screen.getByText(/la tasa de entrevistas es un mínimo/)).toBeInTheDocument()
+  })
+
+  it('shows counts per status and the chart data tables', async () => {
+    installFakeApi(STATS_SAMPLE, {
+      statsWeekly: [
+        { week_start: '2026-11-09', count: 1 },
+        { week_start: '2026-11-16', count: 0 },
+        { week_start: '2026-11-23', count: 2 },
+      ],
+    })
+    const user = renderPage()
+    await openStats(user)
+
+    const byStatus = within(screen.getByRole('region', { name: 'Candidaturas por estado' }))
+    expect(byStatus.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Por aplicar1',
+      'Aplicada1',
+      'Entrevista1',
+      'Oferta1',
+      'Rechazada2',
+    ])
+    expect(tableRows('Distribución por estado')).toEqual([
+      ['Por aplicar', '1'],
+      ['Aplicada', '1'],
+      ['Entrevista', '1'],
+      ['Oferta', '1'],
+      ['Rechazada', '2'],
+    ])
+    expect(tableRows('Evolución semanal')).toEqual([
+      ['9 nov', '1'],
+      ['16 nov', '0'],
+      ['23 nov', '2'],
+    ])
+    expect(tableRows('Entrevistas y ofertas')).toEqual([
+      ['Enviadas', '5 · 100 %'],
+      ['Con respuesta', '4 · 80 %'],
+      ['Entrevista u oferta', '2 · 40 %'],
+      ['Oferta', '1 · 20 %'],
+    ])
+  })
+
+  it('changes the period and reloads the statistics', async () => {
+    const api = installFakeApi(STATS_SAMPLE)
+    const user = renderPage()
+    await openStats(user)
+    expect(screen.queryByLabelText('Buscar por empresa o puesto')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('radio', { name: 'Últimos 30 días' }))
+
+    await waitFor(() => expect(within(tile('Candidaturas')).getByText('4')).toBeInTheDocument())
+    expect(screen.getByRole('radio', { name: 'Últimos 30 días' })).toHaveAttribute('aria-checked', 'true')
+    expect(api.statsQueries()).toContain('period=30d&today=2026-11-23')
+    expect(screen.getByText('Del 25 oct 2026 al 23 nov 2026.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('radio', { name: 'Últimos 90 días' }))
+    await waitFor(() => expect(within(tile('Candidaturas')).getByText('5')).toBeInTheDocument())
+  })
+
+  it('shows an empty state for a period without applications', async () => {
+    installFakeApi([makeApplication({ id: 1, applied_date: '2024-01-10' })])
+    const user = renderPage()
+    await openStats(user).catch(() => undefined)
+    await user.click(screen.getByRole('radio', { name: 'Últimos 30 días' }))
+
+    expect(await screen.findByText('No hay candidaturas en este periodo')).toBeInTheDocument()
+  })
+
+  it('shows a dash instead of dividing by zero when nothing was submitted', async () => {
+    installFakeApi([
+      makeApplication({ id: 1, status: 'wishlist', applied_date: null }),
+      makeApplication({ id: 2, status: 'wishlist', applied_date: null }),
+    ])
+    const user = renderPage()
+    await openStats(user)
+
+    expect(tile('Tasa de respuesta')).toHaveTextContent('—')
+    expect(tile('Tasa de respuesta')).toHaveTextContent('Sin candidaturas enviadas')
+    expect(tile('Tasa de entrevistas')).toHaveTextContent('—')
+    expect(tableRows('Entrevistas y ofertas')[0]).toEqual(['Enviadas', '0'])
+    expect(
+      screen.getByText('No hay candidaturas enviadas con fecha de solicitud en este periodo.'),
+    ).toBeInTheDocument()
+  })
+
+  it('reports submitted applications without an applied date', async () => {
+    installFakeApi([makeApplication({ id: 1, status: 'applied', applied_date: null })])
+    const user = renderPage()
+    await openStats(user)
+
+    expect(
+      screen.getByText('1 candidatura enviada no tiene fecha de solicitud y no aparece en el gráfico.'),
+    ).toBeInTheDocument()
+  })
+
+  it('stays in sync with changes made in other tabs', async () => {
+    const api = installFakeApi(STATS_SAMPLE)
+    const user = renderPage()
+    await openStats(user)
+    expect(within(tile('Ofertas')).getByText('1')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /Candidaturas/ }))
+    await user.click(screen.getByRole('button', { name: 'Editar Backend Developer en Example Corp' }))
+    await user.selectOptions(within(screen.getByRole('dialog')).getByLabelText('Estado'), 'offer')
+    await user.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await screen.findByText('Candidatura actualizada.')
+    await user.click(statsTab())
+
+    await waitFor(() => expect(within(tile('Ofertas')).getByText('2')).toBeInTheDocument())
+    expect(tile('Tasa de entrevistas')).toHaveTextContent(/60\s%/)
+    expect(api.statsQueries().length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('updates while visible when an application is created from the stats tab', async () => {
+    installFakeApi(STATS_SAMPLE)
+    const user = renderPage()
+    await openStats(user)
+    expect(within(tile('Candidaturas')).getByText('6')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Nueva candidatura' }))
+    const dialog = screen.getByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/Empresa/), 'Hooli')
+    await user.type(within(dialog).getByLabelText(/Puesto/), 'SRE')
+    await user.click(within(dialog).getByRole('button', { name: 'Añadir candidatura' }))
+
+    await waitFor(() => expect(within(tile('Candidaturas')).getByText('7')).toBeInTheDocument())
+    expect(statsTab()).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('does not request statistics until the tab is opened', async () => {
+    const api = installFakeApi(STATS_SAMPLE)
+    renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+
+    expect(api.statsQueries()).toEqual([])
+  })
+
+  it('shows an error with a retry when the statistics cannot be loaded', async () => {
+    installFakeApi(STATS_SAMPLE, { failStats: 1 })
+    const user = renderPage()
+    await screen.findByRole('list', { name: 'Candidaturas' })
+    await user.click(statsTab())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Internal Server Error')
+    await user.click(within(alert).getByRole('button', { name: 'Reintentar' }))
+
+    expect(await screen.findByRole('region', { name: 'Evolución semanal' })).toBeInTheDocument()
   })
 })

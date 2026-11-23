@@ -150,3 +150,40 @@ class FollowUpComplete(SQLModel):
 
     completed_on: date | None = None
     next_follow_up_date: date | None = None
+
+
+# --- Statistics -----------------------------------------------------------------
+
+
+class StatsPeriod(StrEnum):
+    LAST_30_DAYS = "30d"
+    LAST_90_DAYS = "90d"
+    ALL = "all"
+
+
+class WeeklyCount(SQLModel):
+    week_start: date  # Monday
+    count: int
+
+
+class StatsOverview(SQLModel):
+    """Statistics computed only from stored data (current status and dates).
+
+    There is no history of status changes, so rates describe where applications are
+    *now*; see the README for the definitions and their limitations.
+    """
+
+    period: StatsPeriod
+    today: date
+    start: date | None  # first day included; None for the whole history
+    total: int
+    by_status: dict[ApplicationStatus, int]
+    submitted: int  # every status except wishlist
+    responded: int  # interview + offer + rejected
+    interviews: int  # interview + offer (reached at least the interview stage)
+    offers: int
+    response_rate: float | None  # responded / submitted, None when submitted == 0
+    interview_rate: float | None  # interviews / submitted
+    offer_rate: float | None  # offers / submitted
+    weekly: list[WeeklyCount]  # submitted applications per week, by applied_date
+    undated_submitted: int  # submitted without applied_date (not in `weekly`)

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import type { FollowUpCounts } from '../types/application'
-import { BellIcon, ColumnsIcon, ListIcon } from './ui'
+import { BellIcon, ChartIcon, ColumnsIcon, ListIcon } from './ui'
 
-export type View = 'list' | 'kanban' | 'follow-ups'
+export type View = 'list' | 'kanban' | 'follow-ups' | 'stats'
 
 interface ViewTabsProps {
   view: View
@@ -36,7 +36,11 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
   }
 
   return (
-    <div role="tablist" aria-label="Vista" className="flex gap-1 rounded-xl bg-slate-200/60 p-1 sm:inline-flex">
+    <div
+      role="tablist"
+      aria-label="Vista"
+      className="grid grid-cols-2 gap-1 rounded-xl bg-slate-200/60 p-1 sm:inline-flex"
+    >
       {tab('list', 'Candidaturas', <ListIcon />)}
       {tab('kanban', 'Kanban', <ColumnsIcon />)}
       {tab(
@@ -52,6 +56,7 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
           </span>
         ),
       )}
+      {tab('stats', 'Estadísticas', <ChartIcon />)}
     </div>
   )
 }

@@ -64,3 +64,23 @@ export interface FollowUpOverview {
   upcoming: Application[]
   counts: FollowUpCounts
 }
+
+export type StatsPeriod = '30d' | '90d' | 'all'
+
+/** Response of GET /api/stats. Rates are 0–1, or null when nothing was submitted. */
+export interface StatsOverview {
+  period: StatsPeriod
+  today: string
+  start: string | null
+  total: number
+  by_status: Record<ApplicationStatus, number>
+  submitted: number
+  responded: number
+  interviews: number
+  offers: number
+  response_rate: number | null
+  interview_rate: number | null
+  offer_rate: number | null
+  weekly: { week_start: string; count: number }[]
+  undated_submitted: number
+}

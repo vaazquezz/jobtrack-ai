@@ -161,3 +161,10 @@ export const ColumnsIcon = (p: { className?: string }) => (
     <rect x="17" y="4" width="4" height="7" rx="1" />
   </Icon>
 )
+
+export const ChartIcon = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M3 3v18h18" />
+    <path d="M8 17v-5M13 17V8M18 17v-9" />
+  </Icon>
+)
