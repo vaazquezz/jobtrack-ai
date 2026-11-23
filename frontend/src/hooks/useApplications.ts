@@ -14,10 +14,11 @@ type LoadState =
 
 /**
  * Loads applications matching `filters` from the API and reloads whenever the filters
- * change or after a create/update/delete. Stale requests are aborted, so only the
- * response for the latest filters is shown.
+ * change, after a create/update/delete, or when `version` changes (used to refresh after
+ * changes made elsewhere, e.g. in the follow-ups view). Stale requests are aborted, so
+ * only the response for the latest filters is shown.
  */
-export function useApplications(filters: ApplicationFilters = {}) {
+export function useApplications(filters: ApplicationFilters = {}, version = 0) {
   const query = filters.query?.trim() ?? ''
   const status = filters.status ?? null
 
@@ -28,7 +29,7 @@ export function useApplications(filters: ApplicationFilters = {}) {
   // Key of the request whose results are on screen; differs from the current key while
   // a new request is in flight, which lets the UI show a "refreshing" hint.
   const [loadedKey, setLoadedKey] = useState<string | null>(null)
-  const requestKey = JSON.stringify([query, status, reloadKey])
+  const requestKey = JSON.stringify([query, status, reloadKey, version])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -46,7 +47,7 @@ export function useApplications(filters: ApplicationFilters = {}) {
         setLoadedKey(requestKey)
       })
     return () => controller.abort()
-  }, [query, status, reloadKey, requestKey])
+  }, [query, status, reloadKey, version, requestKey])
 
   /** Reload showing the loading state (e.g. "retry" after an error). */
   const reload = () => {
