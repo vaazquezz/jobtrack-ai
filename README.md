@@ -5,15 +5,14 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 6 — statistics dashboard. The remaining features are planned and are
-> being built incrementally, one branch per phase.
+> **Status:** phase 7 — AI job offer analysis. Built incrementally, one branch per phase.
 
 ## Tech stack
 
 | Layer    | Technology                                              |
 | -------- | ------------------------------------------------------- |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, dnd-kit, Recharts |
-| Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings      |
+| Backend  | Python 3.11+, FastAPI, SQLModel, Pydantic Settings, Anthropic SDK |
 | Database | SQLite                                                  |
 | Quality  | pytest, ruff, Vitest, Testing Library, oxlint, GitHub Actions |
 
@@ -26,7 +25,7 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 - [x] **Phase 4** — Follow-up reminders
 - [x] **Phase 5** — Kanban board
 - [x] **Phase 6** — Statistics dashboard
-- [ ] **Phase 7** — AI job offer analysis and CV comparison
+- [x] **Phase 7** — AI job offer analysis and CV comparison
 
 ## Project structure
 
@@ -108,12 +107,18 @@ and the header badge shows whether the API is reachable.
   remove its date (with quick options: 3 days, 1 week, 2 weeks) or edit the application.
   The list also flags overdue and due-today follow-ups. The search and status filters
   apply to the list and follow-ups tabs, and the selected tab is kept in the URL
-  (`#kanban`, `#seguimientos`, `#estadisticas`).
+  (`#kanban`, `#seguimientos`, `#estadisticas`, `#analisis`).
 - **Statistics** — the *Estadísticas* tab shows KPIs, counts per status and three charts
   (weekly activity, distribution by status, interviews and offers) for the last 30 days,
   the last 90 days or the whole history. Each chart has a hover tooltip and a *Ver datos*
   table. The numbers reload after any change made in the other tabs. Search and status
   filters do not apply here. See [Statistics](#statistics) for the definitions.
+- **AI analysis** — the *Análisis IA* tab compares a pasted CV with a job offer and lists
+  what the CV demonstrates (with the quote that proves it), what is missing, what is
+  ambiguous, the relevant skills, and recommendations for the CV and the interview, with an
+  orientative score and a *Copiar resultado* button. It works without any key (basic
+  keyword analysis) and can use Claude when the backend has an API key. See
+  [AI analysis](#ai-analysis).
 - **Search and filter** — type in the search box to find applications by company or
   position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
   *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
@@ -141,6 +146,8 @@ All endpoints are under `/api`. Request and response bodies are JSON.
 | `GET`    | `/api/follow-ups`         | Follow-ups grouped by date      | `200`   |
 | `POST`   | `/api/applications/{id}/follow-up/complete` | Mark a follow-up as done | `200` |
 | `GET`    | `/api/stats`              | Statistics for a period         | `200`   |
+| `GET`    | `/api/analysis/config`    | Available analysis modes        | `200`   |
+| `POST`   | `/api/analysis`           | Analyse a CV against an offer   | `200`   |
 
 ### Listing, search and filters
 
@@ -247,6 +254,59 @@ describe where applications are today:
 - Creation dates are stored in UTC, so an application without an applied date created
   late in the evening may fall on the next day.
 
+### AI analysis
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/api/analysis/config` | Whether AI analysis is available, and which provider/model (never the key) |
+| `POST` | `/api/analysis` | Analyse `{cv_text, job_text, mode, consent_external}` |
+
+**Two modes.**
+
+| Mode | When | What it does |
+| --- | --- | --- |
+| `local` (default) | Always available | Matches ~55 known technologies and competencies (with aliases, ignoring case and accents) between the offer and the CV. No AI and no external service: the texts never leave the server. It cannot understand context, synonyms outside its catalogue or requirements phrased differently, and it always marks years of experience and degrees as ambiguous. |
+| `ai` | Only if `ANTHROPIC_API_KEY` is set on the backend, and `consent_external: true` | Sends both texts to Claude through the official Anthropic SDK. The response is constrained to a JSON schema and validated again with Pydantic. |
+
+**How the result is kept honest (both modes).**
+
+- Every requirement is classified as **met** (demonstrated by the CV), **missing** or
+  **ambiguous**. A *met* requirement must quote text that really appears in the CV; the
+  backend checks it and downgrades any requirement whose quote is not in the CV to
+  *ambiguous*, so invented experience is never reported as demonstrated.
+- The prompt tells the model to use only what the CV says, to treat the texts as data
+  (ignoring instructions inside them), to prefer *ambiguous* when unsure and never to
+  recommend claiming experience the CV does not show.
+- **Orientative score** = (met + 0.5 × ambiguous) ÷ requirements analysed × 100, computed by
+  the backend from the lists (not by the model). It only summarises this comparison: it is
+  **not** a probability of being hired. With no requirements detected it is `null`.
+
+**Privacy.** The CV and the offer are processed in memory: they are not stored in the
+database, logged or saved in the browser. In the UI, AI mode shows a confirmation dialog
+explaining that the full texts will be sent to an external provider before anything is
+sent; the backend also refuses `mode: "ai"` without `consent_external: true` (`422`).
+
+**Configuration** (`backend/.env`, see `.env.example`; restart the backend after changes):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables AI mode. Empty = local analysis only. Read only by the backend, never sent to the frontend. |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model to use. |
+| `AI_TIMEOUT_SECONDS` | `60` | Time to wait for the provider before failing. |
+| `AI_MAX_RETRIES` | `2` | SDK retries on connection errors, 429 and 5xx. |
+
+To enable AI mode, create an API key in the Anthropic Console, put it in `backend/.env`
+as `ANTHROPIC_API_KEY=...` and restart `uvicorn`. Never commit the key: `.env` is
+git-ignored. Each AI analysis is a paid API call billed to that key.
+
+**Limits and errors.** Each text must have 30–20,000 characters (`422` otherwise). AI
+mode without a key returns `409`. Provider failures return a Spanish message:
+timeout `504`, rate limit `429`, and invalid key, other API errors, connection errors,
+refusals, truncated responses or responses that do not match the schema `502`. Server-side
+refusal fallbacks are enabled, so a request declined by the model's safety classifiers
+is retried on a fallback model within the same call. The app does not fall back
+silently from AI to the local mode: the user decides.
+
 ### Errors
 
 | Status | When                                                              |
@@ -300,4 +360,7 @@ The same checks run automatically in GitHub Actions on every pull request.
 ## Security
 
 Secrets such as API keys are never committed. Local configuration lives in `backend/.env`,
-which is git-ignored; `.env.example` documents the available variables.
+which is git-ignored; `.env.example` documents the available variables. The Anthropic key
+is only read by the backend (as a secret value that is not printed in logs or settings
+dumps) and never reaches the frontend. Tests use fake providers and fictional texts: they
+never call a real API.
