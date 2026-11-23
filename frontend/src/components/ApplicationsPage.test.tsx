@@ -153,7 +153,9 @@ describe('ApplicationsPage', () => {
     expect(within(rows[0]).getByText('Example Corp')).toBeInTheDocument()
     expect(within(rows[0]).getByText('Backend Developer')).toBeInTheDocument()
     expect(within(rows[0]).getByText('1 nov 2026')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('Seguimiento vencido: 8 nov 2026')).toBeInTheDocument()
+    expect(within(rows[0]).getByTitle('Fecha de seguimiento')).toHaveTextContent(
+      'Seguimiento: Vencido · 8 nov 2026',
+    )
     expect(within(rows[0]).getByText('Aplicada')).toBeInTheDocument()
     expect(
       within(rows[0]).getByRole('link', { name: /Abrir oferta de Backend Developer/ }),

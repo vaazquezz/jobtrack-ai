@@ -2,7 +2,7 @@ import { followUpState } from '../lib/followUps'
 import { formatDate, todayIso } from '../lib/format'
 import type { Application } from '../types/application'
 import { StatusBadge } from './StatusBadge'
-import { CalendarIcon, ExternalLinkIcon, PencilIcon, TrashIcon } from './ui'
+import { BellIcon, CalendarIcon, ExternalLinkIcon, PencilIcon, TrashIcon } from './ui'
 
 interface ApplicationListProps {
   applications: Application[]
@@ -14,9 +14,9 @@ const iconButton =
   'rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600'
 
 const FOLLOW_UP_TEXT = {
-  overdue: { className: 'font-medium text-rose-600', prefix: 'Seguimiento vencido' },
-  today: { className: 'font-medium text-amber-700', prefix: 'Seguimiento hoy' },
-  upcoming: { className: 'text-slate-400', prefix: 'Seguimiento' },
+  overdue: { className: 'font-medium text-rose-600', label: 'Vencido · ' },
+  today: { className: 'font-medium text-amber-700', label: 'Hoy · ' },
+  upcoming: { className: 'text-slate-400', label: '' },
 } as const
 
 export function ApplicationList({ applications, onEdit, onDelete }: ApplicationListProps) {
@@ -76,8 +76,14 @@ export function ApplicationList({ applications, onEdit, onDelete }: ApplicationL
                   {applied ?? <span className="text-slate-400">Sin fecha</span>}
                 </span>
                 {followUp && (
-                  <span className={`block text-xs ${followUpStyle.className}`}>
-                    {followUpStyle.prefix}: {followUp}
+                  <span
+                    className={`flex items-center gap-1 text-xs whitespace-nowrap ${followUpStyle.className}`}
+                    title="Fecha de seguimiento"
+                  >
+                    <BellIcon className="h-3 w-3 shrink-0" />
+                    <span className="sr-only">Seguimiento: </span>
+                    {followUpStyle.label}
+                    {followUp}
                   </span>
                 )}
               </div>

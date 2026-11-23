@@ -130,7 +130,7 @@ export function FollowUpsView({
                         </p>
                       </div>
 
-                      <div className={`flex items-center gap-1.5 text-sm ${group.dateText} sm:w-44`}>
+                      <div className={`flex items-center gap-1.5 text-sm whitespace-nowrap ${group.dateText} sm:w-56`}>
                         <CalendarIcon className="h-3.5 w-3.5 shrink-0" />
                         <span>
                           <span className="font-medium">
