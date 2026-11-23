@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import type { FollowUpCounts } from '../types/application'
-import { BellIcon, ChartIcon, ColumnsIcon, ListIcon } from './ui'
+import { BellIcon, ChartIcon, ColumnsIcon, ListIcon, SparklesIcon } from './ui'
 
-export type View = 'list' | 'kanban' | 'follow-ups' | 'stats'
+export type View = 'list' | 'kanban' | 'follow-ups' | 'stats' | 'analysis'
 
 interface ViewTabsProps {
   view: View
@@ -16,7 +16,13 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
   const badgeStyle =
     followUps && followUps.overdue > 0 ? 'bg-rose-600 text-white' : 'bg-amber-500 text-white'
 
-  const tab = (value: View, label: string, icon: ReactNode, badge?: ReactNode) => {
+  const tab = (
+    value: View,
+    label: string,
+    icon: ReactNode,
+    badge?: ReactNode,
+    extraClass = '',
+  ) => {
     const active = view === value
     return (
       <button
@@ -24,7 +30,7 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
         role="tab"
         aria-selected={active}
         onClick={() => onChange(value)}
-        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:gap-2 sm:px-4 text-sm font-medium transition sm:flex-none ${
+        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium transition sm:gap-2 sm:px-4 lg:flex-none ${extraClass} ${
           active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
         }`}
       >
@@ -39,7 +45,7 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
     <div
       role="tablist"
       aria-label="Vista"
-      className="grid grid-cols-2 gap-1 rounded-xl bg-slate-200/60 p-1 sm:inline-flex"
+      className="grid grid-cols-2 gap-1 rounded-xl bg-slate-200/60 p-1 sm:grid-cols-3 lg:inline-flex"
     >
       {tab('list', 'Candidaturas', <ListIcon />)}
       {tab('kanban', 'Kanban', <ColumnsIcon />)}
@@ -57,6 +63,7 @@ export function ViewTabs({ view, onChange, followUps }: ViewTabsProps) {
         ),
       )}
       {tab('stats', 'Estadísticas', <ChartIcon />)}
+      {tab('analysis', 'Análisis IA', <SparklesIcon />, undefined, 'col-span-2 sm:col-span-1')}
     </div>
   )
 }

@@ -16,6 +16,7 @@ import type {
 } from '../types/application'
 import { STATUS_LABELS } from '../types/application'
 import { ApplicationForm } from './ApplicationForm'
+import { AnalysisView } from './AnalysisView'
 import { ApplicationList } from './ApplicationList'
 import { ConfirmDialog } from './ConfirmDialog'
 import { FilterBar } from './FilterBar'
@@ -36,6 +37,7 @@ const VIEW_HASHES: Record<Exclude<View, 'list'>, string> = {
   kanban: '#kanban',
   'follow-ups': '#seguimientos',
   stats: '#estadisticas',
+  analysis: '#analisis',
 }
 
 // The dashboard (and Recharts) is only downloaded when the statistics tab is opened.
@@ -195,6 +197,7 @@ export function ApplicationsPage() {
   }
 
   const subtitle = () => {
+    if (view === 'analysis') return 'Compara tu CV con una oferta de empleo.'
     if (view === 'stats') return 'Estadísticas de tu búsqueda de empleo.'
     if (view === 'follow-ups' && followUpCounts) return followUpSummary(followUpCounts)
     if (view === 'kanban' && board.loadState.status === 'ready') {
@@ -225,10 +228,11 @@ export function ApplicationsPage() {
         )}
       </div>
 
-      {!noApplicationsAtAll && (
+      {/* Tabs stay visible with no applications: the analysis does not need any. */}
+      {(ready || view === 'analysis') && (
         <div className="mt-6 space-y-4">
           <ViewTabs view={view} onChange={changeView} followUps={followUpCounts} />
-          {view === 'stats' ? (
+          {noApplicationsAtAll || view === 'analysis' ? null : view === 'stats' ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <PeriodSelector period={statsPeriod} onChange={setStatsPeriod} />
               <p className="text-xs text-slate-500">
@@ -247,6 +251,11 @@ export function ApplicationsPage() {
           )}
         </div>
       )}
+
+      {/* Kept mounted (hidden) so the pasted texts survive switching tabs. Never stored. */}
+      <div className="mt-6" role="tabpanel" aria-label="Análisis IA" hidden={view !== 'analysis'}>
+        <AnalysisView />
+      </div>
 
       {view === 'stats' && !noApplicationsAtAll && (
         <div className="mt-6" role="tabpanel" aria-label="Estadísticas">
@@ -336,7 +345,7 @@ export function ApplicationsPage() {
       )}
 
       <div
-        hidden={view !== 'list' && !noApplicationsAtAll}
+        hidden={view === 'analysis' || (view !== 'list' && !noApplicationsAtAll)}
         className={`mt-4 transition-opacity ${refreshing ? 'opacity-60' : ''}`}
         aria-busy={refreshing || loadState.status === 'loading'}
       >
