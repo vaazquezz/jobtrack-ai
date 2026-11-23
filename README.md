@@ -5,8 +5,8 @@
 Personal web app to manage a job search: track applications, visualise them on a Kanban
 board, review statistics and, in a later phase, analyse job offers against a CV with AI.
 
-> **Status:** phase 2 — applications UI on top of the REST API. The remaining features are
-> planned and are being built incrementally, one branch per phase.
+> **Status:** phase 3 — search and filters. The remaining features are planned and are
+> being built incrementally, one branch per phase.
 
 ## Tech stack
 
@@ -22,7 +22,7 @@ board, review statistics and, in a later phase, analyse job offers against a CV 
 - [x] **Phase 0** — Project skeleton, health endpoint and CI
 - [x] **Phase 1** — Applications REST API (CRUD)
 - [x] **Phase 2** — Applications UI (list and form)
-- [ ] **Phase 3** — Search and filters
+- [x] **Phase 3** — Search and filters
 - [ ] **Phase 4** — Follow-up reminders
 - [ ] **Phase 5** — Kanban board
 - [ ] **Phase 6** — Statistics dashboard
@@ -91,6 +91,11 @@ and the header badge shows whether the API is reachable.
   applied date defaults to today.
 - **Edit** — the pencil icon opens the same form pre-filled.
 - **Delete** — the bin icon asks for confirmation before anything is removed.
+- **Search and filter** — type in the search box to find applications by company or
+  position (case and accents are ignored) and pick a status (*Todas*, *Por aplicar*,
+  *Aplicada*, *Entrevista*, *Oferta*, *Rechazada*). Both can be combined; results come
+  from the API as you type, without reloading the page. *Limpiar filtros* resets both, and
+  a message is shown when nothing matches.
 - **Feedback** — loading placeholders, an error panel with *Reintentar* if the API is not
   reachable, an empty state for the first visit and a short notice after each change.
 
@@ -106,12 +111,28 @@ All endpoints are under `/api`. Request and response bodies are JSON.
 | -------- | ------------------------- | ------------------------------- | ------- |
 | `GET`    | `/api/health`             | Liveness check                  | `200`   |
 | `POST`   | `/api/applications`       | Create an application           | `201`   |
-| `GET`    | `/api/applications`       | List applications, newest first | `200`   |
+| `GET`    | `/api/applications`       | List and filter, newest first   | `200`   |
 | `GET`    | `/api/applications/{id}`  | Get one application             | `200`   |
 | `PATCH`  | `/api/applications/{id}`  | Update the fields sent          | `200`   |
 | `DELETE` | `/api/applications/{id}`  | Delete an application           | `204`   |
 
-`GET /api/applications` accepts `offset` (default `0`) and `limit` (default `100`, max `200`).
+### Listing, search and filters
+
+`GET /api/applications` accepts these query parameters, which can be combined:
+
+| Parameter | Description                                                                 |
+| --------- | --------------------------------------------------------------------------- |
+| `q`       | Text to find in `company` or `position`. Case- and accent-insensitive (`telefónica` matches `TELEFÓNICA`), surrounding spaces are ignored, max 200 characters |
+| `status`  | One of `wishlist`, `applied`, `interview`, `offer`, `rejected`              |
+| `offset`  | Number of results to skip (default `0`)                                     |
+| `limit`   | Maximum number of results (default `100`, max `200`)                        |
+
+The response header `X-Total-Count` contains the total number of matches, ignoring
+`offset` and `limit`.
+
+```bash
+curl -i "http://localhost:8000/api/applications?q=backend&status=applied&limit=20"
+```
 
 ### Application fields
 
@@ -134,7 +155,7 @@ but `company`, `position` and `status` cannot be `null`.
 | Status | When                                                              |
 | ------ | ----------------------------------------------------------------- |
 | `404`  | The application id does not exist                                 |
-| `422`  | Invalid body or query parameters (missing field, bad URL, unknown status, inconsistent dates, …) |
+| `422`  | Invalid body or query parameters (missing field, bad URL, unknown status, inconsistent dates, search text too long, …) |
 
 ### Example
 

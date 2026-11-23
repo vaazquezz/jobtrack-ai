@@ -1,6 +1,6 @@
 /** Loading, error and empty states for the applications list. */
 
-import { AlertIcon, BriefcaseIcon, Button, PlusIcon } from './ui'
+import { AlertIcon, BriefcaseIcon, Button, PlusIcon, SearchIcon } from './ui'
 
 export function LoadingState() {
   return (
@@ -45,6 +45,23 @@ export function EmptyState({ onCreate }: { onCreate: () => void }) {
       <Button className="mt-6" onClick={onCreate}>
         <PlusIcon />
         Añadir candidatura
+      </Button>
+    </div>
+  )
+}
+
+export function NoResultsState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="flex flex-col items-center rounded-xl border border-slate-200 bg-white px-6 py-12 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+        <SearchIcon className="h-6 w-6" />
+      </span>
+      <h3 className="mt-4 font-semibold text-slate-900">No hay candidaturas que coincidan</h3>
+      <p className="mt-1 max-w-sm text-sm text-slate-500">
+        Prueba con otro texto o cambia el filtro de estado.
+      </p>
+      <Button variant="secondary" className="mt-6" onClick={onClear}>
+        Limpiar filtros
       </Button>
     </div>
   )

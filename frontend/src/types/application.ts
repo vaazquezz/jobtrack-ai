@@ -41,3 +41,9 @@ export interface ApplicationPayload {
   notes: string | null
   follow_up_date: string | null
 }
+
+/** Filters for the list endpoint. Empty values mean "no filter". */
+export interface ApplicationFilters {
+  query?: string
+  status?: ApplicationStatus | null
+}

@@ -31,7 +31,8 @@ export function messageFromDetail(detail: unknown): string | null {
   return null
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Send a request and return the raw response, throwing ApiError for failures. */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   let response: Response
   try {
     response = await fetch(path, {
@@ -55,6 +56,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     throw new ApiError(response.status, message)
   }
 
+  return response
+}
+
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await apiFetch(path, init)
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
