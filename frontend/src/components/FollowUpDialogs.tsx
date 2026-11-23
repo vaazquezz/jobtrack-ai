@@ -141,14 +141,14 @@ export function ChangeFollowUpDateDialog({ application, onSave, onClose }: Chang
         <SubmitError message={submitError} />
         <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
           {application.follow_up_date && (
-            <Button
-              variant="ghost"
-              className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 sm:mr-auto"
+            <button
+              type="button"
+              className="rounded-lg px-3.5 py-2 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-2 focus-visible:outline-rose-600 disabled:opacity-60 sm:mr-auto"
               onClick={() => void save(null)}
               disabled={saving}
             >
               Quitar seguimiento
-            </Button>
+            </button>
           )}
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancelar
