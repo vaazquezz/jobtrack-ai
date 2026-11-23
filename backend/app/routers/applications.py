@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 from app.database import get_session
@@ -10,11 +11,14 @@ from app.models import (
     Application,
     ApplicationCreate,
     ApplicationRead,
+    ApplicationStatus,
     ApplicationUpdate,
     utc_now,
 )
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
+
+SEARCH_MAX_LENGTH = 200
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -41,12 +45,45 @@ def create_application(payload: ApplicationCreate, session: SessionDep) -> Appli
 @router.get("", response_model=list[ApplicationRead])
 def list_applications(
     session: SessionDep,
+    response: Response,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=SEARCH_MAX_LENGTH,
+            description="Case-insensitive text matched against company or position.",
+        ),
+    ] = None,
+    status_filter: Annotated[
+        ApplicationStatus | None,
+        Query(alias="status", description="Only return applications with this status."),
+    ] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[Application]:
-    """List applications, most recently created first."""
+    """List applications, most recently created first.
+
+    `q` and `status` can be combined. The total number of matches (ignoring pagination)
+    is returned in the `X-Total-Count` header.
+    """
+    conditions = []
+    search = q.strip() if q else ""
+    if search:
+        needle = search.casefold()
+        conditions.append(
+            or_(
+                func.py_casefold(Application.company).contains(needle, autoescape=True),
+                func.py_casefold(Application.position).contains(needle, autoescape=True),
+            )
+        )
+    if status_filter is not None:
+        conditions.append(Application.status == status_filter)
+
+    total = session.exec(select(func.count()).select_from(Application).where(*conditions)).one()
+    response.headers["X-Total-Count"] = str(total)
+
     statement = (
         select(Application)
+        .where(*conditions)
         .order_by(col(Application.created_at).desc(), col(Application.id).desc())
         .offset(offset)
         .limit(limit)
