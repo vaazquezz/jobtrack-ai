@@ -55,36 +55,38 @@ export function FilterBar({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div role="group" aria-label="Filtrar por estado" className="flex flex-wrap gap-1.5">
+          {STATUS_OPTIONS.map((option) => {
+            const active = option.value === status
+            return (
+              <button
+                key={option.label}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onStatusChange(option.value)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600 ${
+                  active
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
+                }`}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
         {hasFilters && (
           <button
             type="button"
             onClick={onClear}
-            className="shrink-0 rounded-lg px-3 text-sm font-medium text-indigo-600 hover:bg-indigo-50 focus-visible:outline-2 focus-visible:outline-indigo-600"
+            className="ml-auto rounded-lg px-2 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50 focus-visible:outline-2 focus-visible:outline-indigo-600"
           >
             Limpiar filtros
           </button>
         )}
-      </div>
-
-      <div role="group" aria-label="Filtrar por estado" className="flex flex-wrap gap-1.5">
-        {STATUS_OPTIONS.map((option) => {
-          const active = option.value === status
-          return (
-            <button
-              key={option.label}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onStatusChange(option.value)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600 ${
-                active
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
-              }`}
-            >
-              {option.label}
-            </button>
-          )
-        })}
       </div>
     </div>
   )
