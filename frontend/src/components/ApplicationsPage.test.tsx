@@ -46,6 +46,11 @@ interface FakeApiOptions {
   /** Weekly series returned by the fake /api/stats (it does not compute weeks). */
   statsWeekly?: { week_start: string; count: number }[]
   failStats?: number
+  /** Response of GET /api/analysis/config (default: AI not available). */
+  analysisConfig?: Record<string, unknown>
+  /** Response of POST /api/analysis, or an error status and detail. */
+  analysisResult?: Record<string, unknown>
+  analysisError?: { status: number; detail: string }
 }
 
 function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {}) {
@@ -119,6 +124,24 @@ function installFakeApi(initial: Application[] = [], options: FakeApiOptions = {
           pending: overdue.length + dueToday.length,
         },
       })
+    }
+    if (method === 'GET' && url === '/api/analysis/config') {
+      return json(
+        200,
+        options.analysisConfig ?? {
+          ai_available: false,
+          provider: null,
+          model: null,
+          min_chars: 30,
+          max_chars: 20000,
+        },
+      )
+    }
+    if (method === 'POST' && url === '/api/analysis') {
+      if (options.analysisError) {
+        return json(options.analysisError.status, { detail: options.analysisError.detail })
+      }
+      return json(200, options.analysisResult ?? {})
     }
     if (method === 'GET' && url.startsWith('/api/stats?')) {
       if (statsFailures > 0) {
@@ -1208,5 +1231,226 @@ describe('ApplicationsPage statistics', () => {
     await user.click(within(alert).getByRole('button', { name: 'Reintentar' }))
 
     expect(await screen.findByRole('region', { name: 'Evolución semanal' })).toBeInTheDocument()
+  })
+})
+
+// --- AI analysis ----------------------------------------------------------------------
+// Fictional texts only. The provider is never called: the fake API answers.
+
+const CV_TEXT = 'Perfil ficticio. Experiencia con Python y FastAPI. Nivel de inglés B2.'
+const JOB_TEXT = 'Oferta ficticia: buscamos Python, AWS y Kubernetes. Inglés fluido.'
+
+const ANALYSIS_RESULT = {
+  mode: 'local',
+  provider: 'local-keywords',
+  model: null,
+  summary: 'Análisis básico sin IA: de 4 tecnologías detectadas, 2 aparecen en el CV.',
+  met: [
+    { requirement: 'Python', evidence: 'Experiencia con Python y FastAPI.' },
+    { requirement: 'Inglés', evidence: 'Nivel de inglés B2.' },
+  ],
+  missing: [{ requirement: 'AWS', note: 'La oferta lo menciona y el CV no.' }],
+  ambiguous: [
+    { requirement: 'Kubernetes', evidence: null, note: 'No se puede comprobar.' },
+  ],
+  skills: [
+    { name: 'Python', status: 'demonstrated' },
+    { name: 'AWS', status: 'missing' },
+    { name: 'Kubernetes', status: 'ambiguous' },
+  ],
+  recommendations: [
+    { kind: 'cv', text: 'Si tienes experiencia real con AWS, añádela al CV.' },
+    { kind: 'interview', text: 'Prepara un ejemplo concreto con Python.' },
+  ],
+  score: 63,
+  score_explanation: 'Puntuación orientativa ... no es una probabilidad de ser contratado.',
+  notices: ['Análisis básico sin IA: compara palabras clave.'],
+}
+
+const AI_CONFIG = {
+  ai_available: true,
+  provider: 'anthropic',
+  model: 'claude-opus-5-5',
+  min_chars: 30,
+  max_chars: 20000,
+}
+
+const analysisTab = () => screen.getByRole('tab', { name: /Análisis IA/ })
+const analysisPanel = () => screen.getByRole('tabpanel', { name: 'Análisis IA' })
+const analysisCalls = (api: ReturnType<typeof installFakeApi>) =>
+  api.calls.filter((c) => c.method === 'POST' && c.url === '/api/analysis')
+
+async function openAnalysis(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('list', { name: 'Candidaturas' })
+  await user.click(analysisTab())
+}
+
+async function fillTexts(user: ReturnType<typeof userEvent.setup>) {
+  const panel = within(analysisPanel())
+  await user.type(panel.getByLabelText('Texto del CV'), CV_TEXT)
+  await user.type(panel.getByLabelText('Oferta de empleo'), JOB_TEXT)
+}
+
+describe('ApplicationsPage AI analysis', () => {
+  it('runs the basic analysis without a key and shows a structured result', async () => {
+    const api = installFakeApi([makeApplication()], { analysisResult: ANALYSIS_RESULT })
+    const user = renderPage()
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+
+    // No key: AI is disabled and explained, basic analysis is selected.
+    expect(panel.getByRole('radio', { name: /Con IA/ })).toBeDisabled()
+    expect(panel.getByText(/no tiene una clave de API configurada/)).toBeInTheDocument()
+    expect(panel.getByRole('radio', { name: /Básico, sin IA/ })).toBeChecked()
+
+    await fillTexts(user)
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+
+    expect(await panel.findByText('Resumen de compatibilidad')).toBeInTheDocument()
+    expect(analysisCalls(api)[0].body).toEqual({
+      cv_text: CV_TEXT,
+      job_text: JOB_TEXT,
+      mode: 'local',
+      consent_external: false,
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument() // no consent needed
+    expect(panel.getByText('Análisis básico sin IA (palabras clave)')).toBeInTheDocument()
+    expect(panel.getByText('63')).toBeInTheDocument()
+    expect(panel.getByText(/no es una probabilidad de ser contratado/)).toBeInTheDocument()
+
+    const met = within(panel.getByRole('region', { name: 'Cumple' }))
+    expect(met.getByText('Python')).toBeInTheDocument()
+    expect(met.getByText('«Experiencia con Python y FastAPI.»')).toBeInTheDocument()
+    expect(
+      within(panel.getByRole('region', { name: 'No acreditado o ausente' })).getByText('AWS'),
+    ).toBeInTheDocument()
+    expect(within(panel.getByRole('region', { name: 'Ambiguo' })).getByText('Kubernetes')).toBeInTheDocument()
+    const skills = within(panel.getByRole('region', { name: 'Tecnologías y competencias' }))
+    expect(skills.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      '✓Python: Acreditada',
+      '✕AWS: No aparece',
+      '?Kubernetes: Ambigua',
+    ])
+    expect(
+      within(panel.getByRole('region', { name: 'Para mejorar el CV' })).getByText(/AWS/),
+    ).toBeInTheDocument()
+    expect(
+      within(panel.getByRole('region', { name: 'Para preparar la entrevista' })).getByText(/Python/),
+    ).toBeInTheDocument()
+  })
+
+  it('validates both texts before sending anything', async () => {
+    const api = installFakeApi([makeApplication()])
+    const user = renderPage()
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+
+    await user.type(panel.getByLabelText('Texto del CV'), 'corto')
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+
+    expect(panel.getByText(/Pega el texto de tu CV \(mínimo 30 caracteres\)/)).toBeInTheDocument()
+    expect(panel.getByText(/Pega la descripción de la oferta/)).toBeInTheDocument()
+    expect(panel.getByLabelText('Texto del CV')).toHaveAttribute('aria-invalid', 'true')
+    expect(analysisCalls(api)).toEqual([])
+  })
+
+  it('asks for confirmation before sending the texts to the AI provider', async () => {
+    const api = installFakeApi([makeApplication()], {
+      analysisConfig: AI_CONFIG,
+      analysisResult: { ...ANALYSIS_RESULT, mode: 'ai', provider: 'anthropic', model: 'claude-opus-5-5' },
+    })
+    const user = renderPage()
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+
+    const aiOption = await panel.findByRole('radio', { name: /Con IA · Anthropic/ })
+    await waitFor(() => expect(aiOption).toBeEnabled())
+    await user.click(aiOption)
+    await fillTexts(user)
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+
+    let dialog = screen.getByRole('dialog', { name: '¿Enviar los textos a Anthropic?' })
+    expect(dialog).toHaveTextContent('texto completo de tu CV y de la oferta')
+    expect(dialog).toHaveTextContent('claude-opus-5-5')
+
+    // Cancelling sends nothing.
+    await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }))
+    expect(analysisCalls(api)).toEqual([])
+
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+    dialog = screen.getByRole('dialog', { name: '¿Enviar los textos a Anthropic?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Enviar y analizar' }))
+
+    expect(await panel.findByText('Análisis con IA · Anthropic · claude-opus-5-5')).toBeInTheDocument()
+    expect(analysisCalls(api)).toHaveLength(1)
+    expect(analysisCalls(api)[0].body).toMatchObject({ mode: 'ai', consent_external: true })
+  })
+
+  it('shows server errors from the provider', async () => {
+    installFakeApi([makeApplication()], {
+      analysisConfig: AI_CONFIG,
+      analysisError: { status: 429, detail: 'Se ha alcanzado el límite de peticiones del proveedor de IA.' },
+    })
+    const user = renderPage()
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+    await user.click(await panel.findByRole('radio', { name: /Con IA · Anthropic/ }))
+    await fillTexts(user)
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+    await user.click(screen.getByRole('button', { name: 'Enviar y analizar' }))
+
+    expect(await panel.findByRole('alert')).toHaveTextContent(
+      'Se ha alcanzado el límite de peticiones del proveedor de IA.',
+    )
+    expect(panel.queryByText('Resumen de compatibilidad')).not.toBeInTheDocument()
+  })
+
+  it('copies the result as text', async () => {
+    installFakeApi([makeApplication()], { analysisResult: ANALYSIS_RESULT })
+    const user = renderPage()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+    await fillTexts(user)
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+
+    await user.click(await panel.findByRole('button', { name: 'Copiar resultado' }))
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const text = writeText.mock.calls[0][0] as string
+    expect(text).toContain('Puntuación orientativa: 63/100')
+    expect(text).toContain('- Python. Evidencia: «Experiencia con Python y FastAPI.»')
+    expect(text).toContain('No acreditado o ausente (1)\n- AWS.')
+    expect(panel.getByRole('button', { name: 'Copiado' })).toBeInTheDocument()
+  })
+
+  it('keeps the texts when switching tabs and clears them on demand', async () => {
+    installFakeApi([makeApplication()])
+    const user = renderPage()
+    await openAnalysis(user)
+    await fillTexts(user)
+
+    await user.click(screen.getByRole('tab', { name: /Candidaturas/ }))
+    await user.click(analysisTab())
+
+    const panel = within(analysisPanel())
+    expect(panel.getByLabelText('Texto del CV')).toHaveValue(CV_TEXT)
+    expect(window.location.hash).toBe('#analisis')
+
+    await user.click(panel.getByRole('button', { name: 'Limpiar' }))
+    expect(panel.getByLabelText('Texto del CV')).toHaveValue('')
+    expect(panel.getByLabelText('Oferta de empleo')).toHaveValue('')
+  })
+
+  it('is available even when there are no applications', async () => {
+    installFakeApi([], { analysisResult: ANALYSIS_RESULT })
+    const user = renderPage()
+    expect(await screen.findByText('Todavía no hay candidaturas')).toBeInTheDocument()
+
+    await user.click(analysisTab())
+
+    expect(within(analysisPanel()).getByLabelText('Texto del CV')).toBeVisible()
+    expect(screen.queryByText('Todavía no hay candidaturas')).not.toBeVisible()
   })
 })
