@@ -372,6 +372,8 @@ describe('ApplicationsPage search and filters', () => {
     await user.click(statusButton('Oferta'))
     await user.type(screen.getByLabelText('Buscar por empresa o puesto'), 'zzz')
 
+    // Wait for the debounced search to reach the API before checking the message.
+    await waitFor(() => expect(api.listQueries()).toContain('q=zzz&status=offer&limit=200'))
     expect(await screen.findByText('No hay candidaturas que coincidan')).toBeInTheDocument()
     expect(screen.getByText('0 resultados')).toBeInTheDocument()
     // The empty state for a brand-new tracker is not shown while filtering.
@@ -380,9 +382,13 @@ describe('ApplicationsPage search and filters', () => {
     // Two "Limpiar filtros" buttons: one in the filter bar, one in the no-results state.
     const clearButtons = screen.getAllByRole('button', { name: 'Limpiar filtros' })
     expect(clearButtons).toHaveLength(2)
+    const requestsBeforeClear = api.listQueries().length
     await user.click(clearButtons[1])
 
     await waitFor(() => expect(listedCompanies()).toHaveLength(4))
+    // Clearing goes straight to the unfiltered list, without a stale "q=zzz" request.
+    console.log('AFTER CLEAR', api.listQueries().slice(requestsBeforeClear), 'ALL', api.listQueries())
+    expect(api.listQueries().slice(requestsBeforeClear)).toEqual(['limit=200'])
     expect(screen.getByLabelText('Buscar por empresa o puesto')).toHaveValue('')
     expect(statusButton('Todas')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()

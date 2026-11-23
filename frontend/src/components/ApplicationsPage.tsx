@@ -27,8 +27,10 @@ export function ApplicationsPage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<ApplicationStatus | null>(null)
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS)
+  // Typing is debounced, but clearing the search applies at once (no stale request).
+  const activeQuery = query.trim() === '' ? '' : debouncedQuery
   const { applications, total, loadState, refreshing, reload, create, update, remove } =
-    useApplications({ query: debouncedQuery, status })
+    useApplications({ query: activeQuery, status })
   const [editor, setEditor] = useState<Editor>(null)
   const [toDelete, setToDelete] = useState<Application | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -80,7 +82,7 @@ export function ApplicationsPage() {
   }
 
   // Filters that produced the results currently on screen (search is debounced).
-  const filtered = debouncedQuery.trim() !== '' || status !== null
+  const filtered = activeQuery.trim() !== '' || status !== null
   const ready = loadState.status === 'ready'
   const noApplicationsAtAll = ready && total === 0 && !filtered
   const truncated = ready && applications.length < total
