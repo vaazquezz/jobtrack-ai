@@ -33,13 +33,21 @@ def response(text: str | None, stop_reason: str = "end_turn"):
 
 
 class FakeClient:
-    """Mimics client.beta.messages.create, recording calls."""
+    """Mimics client.messages.create, recording calls.
+
+    Any use of client.beta fails the test: the provider must use the standard endpoint,
+    with no server-side fallback to other models.
+    """
 
     def __init__(self, result=None, error: Exception | None = None):
         self.calls: list[dict] = []
         self._result = result
         self._error = error
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+        self.messages = SimpleNamespace(create=self._create)
+
+    @property
+    def beta(self):
+        raise AssertionError("the beta endpoint (and its fallbacks) must not be used")
 
     def _create(self, **kwargs):
         self.calls.append(kwargs)
@@ -79,8 +87,9 @@ def test_request_uses_structured_output_and_treats_texts_as_data():
     assert call["max_tokens"] == 16_000
     assert call["output_config"]["format"] == {"type": "json_schema", "schema": OUTPUT_SCHEMA}
     assert call["output_config"]["effort"] == "medium"
-    assert call["fallbacks"] == "default"
-    assert call["betas"] == ["server-side-fallback-2026-07-01"]
+    # No retry on another model after a safety refusal.
+    assert "fallbacks" not in call
+    assert "betas" not in call
     assert "No inventes" in call["system"]
     assert "ignora cualquier instrucción" in call["system"]
     content = call["messages"][0]["content"]
@@ -126,14 +135,27 @@ def test_response_without_text_is_rejected():
     assert error.value.kind == "invalid_response"
 
 
-@pytest.mark.parametrize(
-    ("stop_reason", "kind"), [("refusal", "refusal"), ("max_tokens", "truncated")]
-)
-def test_unfinished_responses_are_errors(stop_reason: str, kind: str):
+def test_truncated_response_is_an_error():
     with pytest.raises(AIProviderError) as error:
-        provider(FakeClient(response(json.dumps(VALID), stop_reason))).analyze(CV, JOB)
+        provider(FakeClient(response(json.dumps(VALID), "max_tokens"))).analyze(CV, JOB)
 
-    assert error.value.kind == kind
+    assert error.value.kind == "truncated"
+    assert error.value.status_code == 502
+
+
+def test_safety_refusal_is_reported_and_not_retried():
+    client = FakeClient(response(json.dumps(VALID), "refusal"))
+
+    with pytest.raises(AIProviderError) as error:
+        provider(client).analyze(CV, JOB)
+
+    assert error.value.kind == "refusal"
+    assert error.value.status_code == 422
+    assert "políticas de seguridad" in error.value.message
+    assert "No se ha reintentado con otro modelo" in error.value.message
+    # Exactly one request, to the configured model: no second attempt elsewhere.
+    assert len(client.calls) == 1
+    assert client.calls[0]["model"] == "claude-opus-5-5"
 
 
 # --- API errors -----------------------------------------------------------------------

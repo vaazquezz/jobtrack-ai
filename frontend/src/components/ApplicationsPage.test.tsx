@@ -1405,6 +1405,29 @@ describe('ApplicationsPage AI analysis', () => {
     expect(panel.queryByText('Resumen de compatibilidad')).not.toBeInTheDocument()
   })
 
+  it('shows a safety refusal once, without retrying the request', async () => {
+    const api = installFakeApi([makeApplication()], {
+      analysisConfig: AI_CONFIG,
+      analysisError: {
+        status: 422,
+        detail:
+          'El modelo de IA ha rechazado analizar estos textos por sus políticas de seguridad. No se ha reintentado con otro modelo; puedes revisar los textos o usar el análisis básico.',
+      },
+    })
+    const user = renderPage()
+    await openAnalysis(user)
+    const panel = within(analysisPanel())
+    await user.click(await panel.findByRole('radio', { name: /Con IA · Anthropic/ }))
+    await fillTexts(user)
+    await user.click(panel.getByRole('button', { name: 'Analizar oferta' }))
+    await user.click(screen.getByRole('button', { name: 'Enviar y analizar' }))
+
+    expect(await panel.findByRole('alert')).toHaveTextContent('políticas de seguridad')
+    expect(panel.getByRole('alert')).toHaveTextContent('No se ha reintentado con otro modelo')
+    expect(analysisCalls(api)).toHaveLength(1)
+    expect(panel.queryByText('Resumen de compatibilidad')).not.toBeInTheDocument()
+  })
+
   it('copies the result as text', async () => {
     installFakeApi([makeApplication()], { analysisResult: ANALYSIS_RESULT })
     const user = renderPage()

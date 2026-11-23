@@ -164,6 +164,7 @@ def test_ai_mode_with_consent_returns_a_verified_result(client: TestClient, ai_p
         (AIProviderError("timeout", "Ha tardado demasiado.", 504), 504),
         (AIProviderError("rate_limited", "Límite alcanzado.", 429), 429),
         (AIProviderError("invalid_response", "Formato inesperado.", 502), 502),
+        (AIProviderError("refusal", "Rechazado por políticas de seguridad.", 422), 422),
     ],
 )
 def test_provider_errors_are_returned_with_their_status(
