@@ -59,6 +59,15 @@ def test_search_is_case_insensitive_with_accents(seeded: TestClient, query: str)
     assert companies(seeded, q=query) == ["Telefónica Tech"]
 
 
+@pytest.mark.parametrize("query", ["óptima", "ÓPTIMA", "Óptima"])
+def test_search_folds_accented_capitals_stored_in_the_database(client: TestClient, query: str):
+    # SQLite's own lower()/LIKE would not fold "Ó", so this guards the casefold function.
+    client.post(URL, json={"company": "ÓPTIMA Consulting", "position": "Consultor"})
+    client.post(URL, json={"company": "Other Co", "position": "Consultor"})
+
+    assert companies(client, q=query) == ["ÓPTIMA Consulting"]
+
+
 def test_search_trims_surrounding_spaces(seeded: TestClient):
     assert companies(seeded, q="  globex  ") == ["Globex Labs"]
 
