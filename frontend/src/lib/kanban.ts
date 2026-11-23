@@ -1,5 +1,5 @@
 import type { Application, ApplicationStatus } from '../types/application'
-import { APPLICATION_STATUSES, STATUS_LABELS } from '../types/application'
+import { APPLICATION_STATUSES } from '../types/application'
 
 /** Group applications into one column per status, keeping their order. */
 export function groupByStatus(
@@ -28,4 +28,3 @@ export function dropTarget(
   return overId
 }
 
-export const columnLabel = (status: ApplicationStatus) => STATUS_LABELS[status]
